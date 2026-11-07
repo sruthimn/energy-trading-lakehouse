@@ -57,6 +57,7 @@ The generator contains a function, `to_standard_volume`, that holds the correct 
 - Each desk trades only its own commodities (the power desk never trades crude).
 - Gas deliveries start at 05:00, because the gas day runs from 05:00 to 05:00.
 - About **8% of trades are amended** one to four times, and about **2% are cancelled**. In a short simulation, a few of these changes fall after the last day, so the observed shares are slightly lower. At full size, over 20 days: 7.0% amended and 1.7% cancelled.
+- About **0.5% of new trades arrive a day late** (defect D03): their `trade_date` and `last_modified` say yesterday, but the row only reaches the database today. At full size over 20 days that is 1,911 rows. See `docs/data/source-database.md` for why this matters.
 - The same seed always gives the same data.
 - The simulator counts what it creates (new trades, amendments, cancellations). These counts will go into the truth manifest (issue #13) so tests can prove the pipeline finds every one.
 

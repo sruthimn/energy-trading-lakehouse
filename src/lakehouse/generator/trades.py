@@ -18,7 +18,7 @@ systems do. Converting them to UTC is the pipeline's job.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -64,6 +64,7 @@ PROFILES = {
 AMENDMENT_RATE = 0.08  # share of trades amended at least once (defect D01)
 MAX_AMENDMENTS = 4  # a trade can be amended up to this many times
 CANCELLATION_RATE = 0.02  # share of trades cancelled (defect D02)
+LATE_ROW_RATE = 0.005  # share of new trades that arrive a day late (defect D03)
 MAX_TRADE_NUMBER = 999_999  # trade ids have six digits
 
 TRADE_COLUMNS = [
@@ -98,6 +99,14 @@ def add_business_days(day: date, count: int) -> date:
         current += timedelta(days=1)
         if is_business_day(current):
             count -= 1
+    return current
+
+
+def previous_business_day(day: date) -> date:
+    """The business day before `day`."""
+    current = day - timedelta(days=1)
+    while not is_business_day(current):
+        current -= timedelta(days=1)
     return current
 
 
@@ -138,6 +147,36 @@ def to_standard_volume(
     return volume  # emissions: tCO2e only
 
 
+_DATETIME_FIELDS = ("delivery_start", "delivery_end", "last_modified")
+
+
+def _encode_rng(state: tuple) -> list:
+    """Random generator state as plain lists, so it can be saved as JSON."""
+    version, internal, gauss = state
+    return [version, list(internal), gauss]
+
+
+def _decode_rng(data: list) -> tuple:
+    return (data[0], tuple(data[1]), data[2])
+
+
+def _encode_row(row: dict) -> dict:
+    """A trade row with its dates written as text, so it can be saved as JSON."""
+    out = dict(row)
+    for name in _DATETIME_FIELDS:
+        out[name] = row[name].isoformat()
+    out["trade_date"] = row["trade_date"].isoformat()
+    return out
+
+
+def _decode_row(row: dict) -> dict:
+    out = dict(row)
+    for name in _DATETIME_FIELDS:
+        out[name] = datetime.fromisoformat(row[name])
+    out["trade_date"] = date.fromisoformat(row["trade_date"])
+    return out
+
+
 @dataclass
 class SimulationStats:
     """Running counts, used later for the truth manifest."""
@@ -147,6 +186,7 @@ class SimulationStats:
     amendments: int = 0  # extra version rows caused by amendments
     amended_trades: int = 0  # distinct trades that were amended at least once
     cancellations: int = 0
+    late_rows: int = 0  # new trades that arrived a day late
     rows: int = 0
 
 
@@ -167,10 +207,16 @@ class TradeSimulator:
     reference: ReferenceData
     seed: int = 42
     trades_per_day: int = 1000
+    late_rate: float = LATE_ROW_RATE
     stats: SimulationStats = field(default_factory=SimulationStats)
 
     def __post_init__(self) -> None:
         self._rng = random.Random(self.seed)
+        # A separate random stream decides which trades arrive late, so adding
+        # late rows does not change any other trade.
+        self._late_rng = random.Random(self.seed + 1)
+        self.late_keys: list[tuple[str, int]] = []  # (trade_id, version) of today's late rows
+        self._can_be_late = False
         self._counter = 0  # the next trade number
         self._latest: dict[str, dict] = {}  # latest version of trades with later actions
         self._schedule: dict[date, list[tuple[str, str]]] = {}  # day -> (trade_id, action)
@@ -202,13 +248,45 @@ class TradeSimulator:
         self._traders = [f"TR-{number:04d}" for number in range(5001, 5031)]
 
     # ------------------------------------------------------------------
+    def get_state(self) -> dict:
+        """Everything needed to carry on tomorrow, as plain data that can be saved."""
+        return {
+            "counter": self._counter,
+            "last_day": self._last_day.isoformat() if self._last_day else None,
+            "rng": _encode_rng(self._rng.getstate()),
+            "late_rng": _encode_rng(self._late_rng.getstate()),
+            "schedule": {
+                day.isoformat(): [list(item) for item in items]
+                for day, items in self._schedule.items()
+            },
+            "latest": {trade_id: _encode_row(row) for trade_id, row in self._latest.items()},
+            "stats": asdict(self.stats),
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Carry on from a saved state, exactly where it left off."""
+        self._counter = state["counter"]
+        self._last_day = date.fromisoformat(state["last_day"]) if state["last_day"] else None
+        self._rng.setstate(_decode_rng(state["rng"]))
+        self._late_rng.setstate(_decode_rng(state["late_rng"]))
+        self._schedule = {
+            date.fromisoformat(day): [tuple(item) for item in items]
+            for day, items in state["schedule"].items()
+        }
+        self._latest = {trade_id: _decode_row(row) for trade_id, row in state["latest"].items()}
+        self.stats = SimulationStats(**state["stats"])
+
+    # ------------------------------------------------------------------
     def simulate_day(self, day: date) -> pd.DataFrame:
         """All trade rows written on this business day (new, amended, cancelled)."""
         if not is_business_day(day):
             raise ValueError(f"{day} is not a business day")
         if self._last_day is not None and day <= self._last_day:
             raise ValueError("Days must be simulated in order, each one once")
+        is_first_day = self._last_day is None
         self._last_day = day
+        self.late_keys = []
+        self._can_be_late = not is_first_day  # there is no "yesterday" on the first day
 
         rows: list[dict] = []
         for _ in range(self.trades_per_day):
@@ -256,8 +334,28 @@ class TradeSimulator:
             "last_modified": self._time_on(day),
         }
         self.stats.new_trades += 1
+        self._maybe_make_late(day, row)
         self._plan_later_changes(day, row)
         return row
+
+    def _maybe_make_late(self, day: date, row: dict) -> None:
+        """A few new trades arrive in the database a day late (defect D03).
+
+        The deal was done yesterday morning, and its last_modified says so, but
+        the row only reaches the database today. A load that remembers "the
+        newest last_modified I have seen" has already moved past that time, so it
+        never picks the row up. The pipeline must be built to catch it.
+        """
+        if not self._can_be_late or self._late_rng.random() >= self.late_rate:
+            return
+        yesterday = previous_business_day(day)
+        morning = self._late_rng.randint(8 * 3600, 11 * 3600 + 3599)
+        row["trade_date"] = yesterday
+        row["last_modified"] = datetime(yesterday.year, yesterday.month, yesterday.day) + timedelta(
+            seconds=morning
+        )
+        self.late_keys.append((row["trade_id"], row["trade_version"]))
+        self.stats.late_rows += 1
 
     def _plan_later_changes(self, day: date, row: dict) -> None:
         """Decide now whether this trade will be amended or cancelled later."""
