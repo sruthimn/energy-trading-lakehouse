@@ -14,6 +14,7 @@ from lakehouse.generator.trades import (
     add_business_days,
     business_days,
     is_business_day,
+    previous_business_day,
     to_standard_volume,
 )
 
@@ -45,6 +46,12 @@ def test_business_days_skip_weekends():
 def test_add_business_days_skips_the_weekend():
     friday = date(2026, 3, 20)
     assert add_business_days(friday, 1) == date(2026, 3, 23)  # the Monday
+
+
+def test_previous_business_day_skips_the_weekend():
+    monday = date(2026, 3, 23)
+    assert previous_business_day(monday) == date(2026, 3, 20)  # the Friday
+    assert previous_business_day(date(2026, 3, 18)) == date(2026, 3, 17)
 
 
 # --- the shape of the data ----------------------------------------------
