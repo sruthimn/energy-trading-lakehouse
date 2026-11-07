@@ -30,8 +30,8 @@ crash.log
 spark-warehouse/
 metastore_db/
 derby.log
-data/
-_truth/
+/data/
+/_truth/
 *.parquet
 !sample-data/**/*.parquet
 
