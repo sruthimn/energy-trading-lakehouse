@@ -13,7 +13,12 @@ Tables the pipeline may read
 trades          every version of every trade (the busiest table)
 books           reference data (full load)
 commodities     reference data (full load)
-counterparties  reference data (change data capture is added in a later step)
+counterparties  reference data, with a change log (change data capture)
+
+Change logs the pipeline may read (CDC)
+---------------------------------------
+cdc_counterparties  every insert, update and delete of counterparties
+cdc_books           every insert, update and delete of books
 
 Tables the pipeline must NOT read
 ---------------------------------
@@ -26,11 +31,17 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
+from lakehouse.generator.master_data import (
+    TABLE_COLUMNS,
+    TABLE_KEY,
+    Change,
+    MasterDataSimulator,
+)
 from lakehouse.generator.reference import (
     DEFAULT_COUNTERPARTIES,
     DEFAULT_SEED,
@@ -77,9 +88,42 @@ CREATE TABLE sim_truth (
     business_date TEXT    NOT NULL,
     kind          TEXT    NOT NULL,
     trade_id      TEXT,
-    trade_version INTEGER
+    trade_version INTEGER,
+    detail        TEXT
+);
+
+-- The change logs. Each row says: at this moment (commit_time), this change
+-- (operation: I insert, U update, D delete) produced this row. For a delete,
+-- the row is what it looked like just before it was deleted.
+-- lsn is a log sequence number: it only ever goes up, across both logs.
+CREATE TABLE cdc_counterparties (
+    lsn               INTEGER PRIMARY KEY,
+    commit_time       TEXT    NOT NULL,
+    operation         TEXT    NOT NULL CHECK (operation IN ('I', 'U', 'D')),
+    counterparty_id   TEXT    NOT NULL,
+    counterparty_name TEXT    NOT NULL,
+    country_of_risk   TEXT    NOT NULL,
+    credit_rating     TEXT    NOT NULL,
+    credit_limit_gbp  INTEGER NOT NULL,
+    is_active         INTEGER NOT NULL,
+    effective_from    TEXT    NOT NULL
+);
+CREATE TABLE cdc_books (
+    lsn            INTEGER PRIMARY KEY,
+    commit_time    TEXT    NOT NULL,
+    operation      TEXT    NOT NULL CHECK (operation IN ('I', 'U', 'D')),
+    book_id        TEXT    NOT NULL,
+    book_name      TEXT    NOT NULL,
+    desk_code      TEXT    NOT NULL,
+    trader_group   TEXT    NOT NULL,
+    is_active      INTEGER NOT NULL,
+    effective_from TEXT    NOT NULL
 );
 """
+
+# The reference tables were loaded into the system long before the simulation
+# starts. The change log begins with one insert for each of those rows.
+INITIAL_LOAD_TIME = datetime(2024, 1, 1, 6, 0, 0)
 
 _COLUMN_LIST = ", ".join(TRADE_COLUMNS)
 _PLACEHOLDERS = ", ".join("?" * len(TRADE_COLUMNS))
@@ -98,6 +142,7 @@ class DayResult:
     cancellations: int
     late_rows: int
     late_keys: tuple[tuple[str, int], ...]
+    master_changes: int
 
 
 class SourceSystem:
@@ -134,6 +179,8 @@ class SourceSystem:
         simulator = TradeSimulator(
             reference, seed=seed, trades_per_day=trades_per_day, late_rate=late_rate
         )
+        master = MasterDataSimulator(seed)
+        master.next_counterparty_number = counterparties + 1
         config = {
             "seed": seed,
             "trades_per_day": trades_per_day,
@@ -144,7 +191,8 @@ class SourceSystem:
         with sqlite3.connect(db_path) as con:
             con.executescript(SCHEMA)
             _write_reference(con, reference)
-            _save_state(con, config, simulator.get_state())
+            next_lsn = _write_initial_change_log(con)
+            _save_state(con, config, simulator.get_state(), _master_state(master, next_lsn))
         return cls(directory)
 
     # ------------------------------------------------------------------
@@ -164,11 +212,16 @@ class SourceSystem:
                 "SELECT COUNT(*), COUNT(DISTINCT trade_id) FROM trades"
             ).fetchone()
             newest = con.execute("SELECT MAX(last_modified) FROM trades").fetchone()[0]
+            changes = con.execute(
+                "SELECT (SELECT COUNT(*) FROM cdc_counterparties)"
+                " + (SELECT COUNT(*) FROM cdc_books)"
+            ).fetchone()[0]
         return {
             "next_business_date": self._next_day.isoformat(),
             "trade_rows": rows,
             "distinct_trades": trades,
             "newest_last_modified": newest,
+            "change_log_rows": changes,
         }
 
     # ------------------------------------------------------------------
@@ -181,6 +234,9 @@ class SourceSystem:
             state = json.loads(
                 con.execute("SELECT value FROM sim_state WHERE key='state'").fetchone()[0]
             )
+            master_state = json.loads(
+                con.execute("SELECT value FROM sim_state WHERE key='master'").fetchone()[0]
+            )
         self._config = config
         self._next_day = date.fromisoformat(config["next_day"])
         reference = generate_reference(config["seed"], config["counterparties"])
@@ -191,6 +247,9 @@ class SourceSystem:
             late_rate=config["late_rate"],
         )
         self._simulator.set_state(state)
+        self._master = MasterDataSimulator(config["seed"])
+        self._master.set_state(master_state["simulator"])
+        self._next_lsn = master_state["next_lsn"]
 
     def _advance_one_day(self) -> DayResult:
         day = self._next_day
@@ -206,16 +265,34 @@ class SourceSystem:
             with sqlite3.connect(self.db_path) as con:
                 con.executemany(INSERT_TRADE, _to_sql_rows(frame))
                 con.executemany(
-                    "INSERT INTO sim_truth VALUES (?, 'LATE_ROW', ?, ?)",
+                    "INSERT INTO sim_truth VALUES (?, 'LATE_ROW', ?, ?, NULL)",
                     [(day.isoformat(), trade_id, version) for trade_id, version in late_keys],
                 )
-                _save_state(con, config, self._simulator.get_state())
+                changes = self._master.changes_for_day(
+                    day, _read_table(con, "counterparties"), _read_table(con, "books")
+                )
+                next_lsn = self._next_lsn
+                for change in changes:
+                    _apply_change(con, change, next_lsn)
+                    con.execute(
+                        "INSERT INTO sim_truth VALUES (?, ?, NULL, NULL, ?)",
+                        (day.isoformat(), change.kind, change.row[TABLE_KEY[change.table]]),
+                    )
+                    self._tell_trade_simulator(change)
+                    next_lsn += 1
+                _save_state(
+                    con,
+                    config,
+                    self._simulator.get_state(),
+                    _master_state(self._master, next_lsn),
+                )
         except Exception:
             self._load()  # forget the half-finished day and go back to the saved progress
             raise
 
         self._config = config
         self._next_day = next_day
+        self._next_lsn = next_lsn
         return DayResult(
             business_date=day,
             rows=len(frame),
@@ -224,7 +301,18 @@ class SourceSystem:
             cancellations=after.cancellations - counts_before[2],
             late_rows=len(late_keys),
             late_keys=late_keys,
+            master_changes=len(changes),
         )
+
+    def _tell_trade_simulator(self, change: Change) -> None:
+        """New trades must not use a deleted counterparty, and may use a new one."""
+        if change.table != "counterparties":
+            return
+        counterparty_id = change.row["counterparty_id"]
+        if change.operation == "D":
+            self._simulator.retire_counterparty(counterparty_id)
+        elif change.operation == "I":
+            self._simulator.add_counterparty(counterparty_id)
 
 
 # ----------------------------------------------------------------------
@@ -240,9 +328,69 @@ def _write_reference(con: sqlite3.Connection, reference: ReferenceData) -> None:
         table.to_sql(name, con, index=False, if_exists="replace")
 
 
-def _save_state(con: sqlite3.Connection, config: dict, state: dict) -> None:
+def _save_state(con: sqlite3.Connection, config: dict, state: dict, master_state: dict) -> None:
     con.execute("INSERT OR REPLACE INTO sim_state VALUES ('config', ?)", (json.dumps(config),))
     con.execute("INSERT OR REPLACE INTO sim_state VALUES ('state', ?)", (json.dumps(state),))
+    con.execute(
+        "INSERT OR REPLACE INTO sim_state VALUES ('master', ?)", (json.dumps(master_state),)
+    )
+
+
+def _master_state(master: MasterDataSimulator, next_lsn: int) -> dict:
+    return {"simulator": master.get_state(), "next_lsn": next_lsn}
+
+
+def _read_table(con: sqlite3.Connection, table: str) -> list[dict]:
+    """All current rows of a reference table, as plain dictionaries."""
+    columns = TABLE_COLUMNS[table]
+    cursor = con.execute(f"SELECT {', '.join(columns)} FROM {table} ORDER BY {TABLE_KEY[table]}")
+    return [dict(zip(columns, row, strict=True)) for row in cursor]
+
+
+def _write_initial_change_log(con: sqlite3.Connection) -> int:
+    """One insert per existing reference row. Returns the next log sequence number."""
+    lsn = 1
+    for table in ("counterparties", "books"):
+        for row in _read_table(con, table):
+            commit_time = INITIAL_LOAD_TIME + timedelta(seconds=lsn)
+            _write_log_row(con, table, "I", row, commit_time, lsn)
+            lsn += 1
+    return lsn
+
+
+def _write_log_row(
+    con: sqlite3.Connection,
+    table: str,
+    operation: str,
+    row: dict,
+    commit_time: datetime,
+    lsn: int,
+) -> None:
+    columns = TABLE_COLUMNS[table]
+    names = ", ".join(["lsn", "commit_time", "operation", *columns])
+    marks = ", ".join("?" * (len(columns) + 3))
+    values = [lsn, commit_time.strftime(TIME_FORMAT), operation, *(row[c] for c in columns)]
+    con.execute(f"INSERT INTO cdc_{table} ({names}) VALUES ({marks})", values)
+
+
+def _apply_change(con: sqlite3.Connection, change: Change, lsn: int) -> None:
+    """Change the table, and write the change to its log, in the same transaction."""
+    table, row = change.table, change.row
+    columns = TABLE_COLUMNS[table]
+    key = TABLE_KEY[table]
+    if change.operation == "I":
+        names = ", ".join(columns)
+        marks = ", ".join("?" * len(columns))
+        con.execute(f"INSERT INTO {table} ({names}) VALUES ({marks})", [row[c] for c in columns])
+    elif change.operation == "U":
+        others = [c for c in columns if c != key]
+        sets = ", ".join(f"{c} = ?" for c in others)
+        con.execute(
+            f"UPDATE {table} SET {sets} WHERE {key} = ?", [*(row[c] for c in others), row[key]]
+        )
+    else:
+        con.execute(f"DELETE FROM {table} WHERE {key} = ?", [row[key]])
+    _write_log_row(con, table, change.operation, row, change.commit_time, lsn)
 
 
 def _to_sql_rows(frame: pd.DataFrame) -> list[list]:

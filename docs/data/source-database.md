@@ -33,11 +33,13 @@ You can close everything and run `advance` tomorrow. It carries on from the next
 | Table | What it holds | How the pipeline should load it |
 |---|---|---|
 | `trades` | Every version of every trade | **Incremental, using a watermark on `last_modified`** |
-| `books` | The portfolios | Full load |
+| `books` | The portfolios | **CDC**, using `cdc_books` |
 | `commodities` | What can be traded | Full load |
-| `counterparties` | The companies we trade with | Full load for now. A change log arrives in issue #12 so you can practise CDC |
+| `counterparties` | The companies we trade with | **CDC**, using `cdc_counterparties`. The table itself shows only the current state |
 
-Dates are stored as text: `2026-03-16 14:05:31` for times and `2026-03-16` for dates.
+| `cdc_counterparties`, `cdc_books` | The change logs: every insert, update and delete | Read in `lsn` order. See `docs/data/change-log-cdc.md` |
+
+`commodities` is the only table loaded in full. Dates are stored as text: `2026-03-16 14:05:31` for times and `2026-03-16` for dates.
 
 ## Tables you must not read
 
@@ -70,6 +72,5 @@ The first day has no late rows, because there is no "yesterday" yet. Amendments 
 
 ## What is not here yet
 
-- A change log for counterparties and books (issue #12), for CDC.
-- Hard deletes and other problems from the truth manifest (issue #13).
+- Hard-deleted trades and the other problems from the truth manifest (issue #13).
 - Schema changes (issue #14).
