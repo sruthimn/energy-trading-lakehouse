@@ -22,8 +22,14 @@ cdc_books           every insert, update and delete of books
 
 Tables the pipeline must NOT read
 ---------------------------------
-sim_state       where the simulator saves its progress
-sim_truth       a private record of what was injected, used by tests
+sim_state           where the simulator saves its progress
+sim_truth           a private record of what was injected, used by tests
+sim_deleted_trades  copies of trade rows that were hard deleted (defect D17)
+
+Files written next to the database
+----------------------------------
+control_totals/date=YYYY-MM-DD/control_totals.csv  end-of-day totals for finance
+_truth/defects.json     the truth manifest (never read it in the pipeline)
 """
 
 from __future__ import annotations
@@ -36,6 +42,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from lakehouse.generator.defects import (
+    DEFAULT_BAD_RANGE_RATE,
+    DEFAULT_HARD_DELETE_COUNT,
+    DEFAULT_HARD_DELETE_DAY,
+    DEFAULT_NULL_RATE,
+    DEFAULT_ORPHAN_RATE,
+    DefectInjector,
+)
 from lakehouse.generator.master_data import (
     TABLE_COLUMNS,
     TABLE_KEY,
@@ -55,6 +69,7 @@ from lakehouse.generator.trades import (
     add_business_days,
     is_business_day,
 )
+from lakehouse.generator.truth import book_totals, load_trades, write_control_totals, write_truth
 
 DB_NAME = "etrm.db"
 DEFAULT_START_DATE = date(2026, 3, 16)  # a Monday
@@ -64,14 +79,14 @@ SCHEMA = """
 CREATE TABLE trades (
     trade_id        TEXT    NOT NULL,
     trade_version   INTEGER NOT NULL,
-    book_id         TEXT    NOT NULL,
-    commodity_code  TEXT    NOT NULL,
+    book_id         TEXT,
+    commodity_code  TEXT,
     buy_sell        TEXT    NOT NULL,
-    volume          REAL    NOT NULL,
-    unit            TEXT    NOT NULL,
+    volume          REAL,
+    unit            TEXT,
     price           REAL    NOT NULL,
     currency        TEXT    NOT NULL,
-    delivery_start  TEXT    NOT NULL,
+    delivery_start  TEXT,
     delivery_end    TEXT    NOT NULL,
     counterparty_id TEXT    NOT NULL,
     trader_id       TEXT    NOT NULL,
@@ -81,6 +96,27 @@ CREATE TABLE trades (
     PRIMARY KEY (trade_id, trade_version)
 );
 CREATE INDEX idx_trades_last_modified ON trades (last_modified);
+
+-- Copies of rows that were physically deleted from trades (defect D17).
+CREATE TABLE sim_deleted_trades (
+    trade_id        TEXT,
+    trade_version   INTEGER,
+    book_id         TEXT,
+    commodity_code  TEXT,
+    buy_sell        TEXT,
+    volume          REAL,
+    unit            TEXT,
+    price           REAL,
+    currency        TEXT,
+    delivery_start  TEXT,
+    delivery_end    TEXT,
+    counterparty_id TEXT,
+    trader_id       TEXT,
+    status          TEXT,
+    trade_date      TEXT,
+    last_modified   TEXT,
+    deleted_on      TEXT
+);
 
 CREATE TABLE sim_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -125,6 +161,19 @@ CREATE TABLE cdc_books (
 # starts. The change log begins with one insert for each of those rows.
 INITIAL_LOAD_TIME = datetime(2024, 1, 1, 6, 0, 0)
 
+# Trades that are safe to hard delete: old, valid, active, with a real counterparty
+# and only one version.
+CANDIDATES_FOR_DELETE = """
+SELECT trade_id FROM trades
+WHERE trade_date <= ?
+  AND status != 'CANCELLED'
+  AND counterparty_id NOT LIKE 'CP-9%'
+  AND book_id IS NOT NULL AND commodity_code IS NOT NULL AND volume IS NOT NULL
+  AND unit IS NOT NULL AND delivery_start IS NOT NULL AND delivery_end > delivery_start
+  AND trade_id IN (SELECT trade_id FROM trades GROUP BY trade_id HAVING COUNT(*) = 1)
+ORDER BY trade_id
+"""
+
 _COLUMN_LIST = ", ".join(TRADE_COLUMNS)
 _PLACEHOLDERS = ", ".join("?" * len(TRADE_COLUMNS))
 INSERT_TRADE = f"INSERT INTO trades ({_COLUMN_LIST}) VALUES ({_PLACEHOLDERS})"
@@ -143,6 +192,8 @@ class DayResult:
     late_rows: int
     late_keys: tuple[tuple[str, int], ...]
     master_changes: int
+    defects_injected: int
+    trades_deleted: int
 
 
 class SourceSystem:
@@ -165,6 +216,11 @@ class SourceSystem:
         start_date: date = DEFAULT_START_DATE,
         counterparties: int = DEFAULT_COUNTERPARTIES,
         late_rate: float = LATE_ROW_RATE,
+        null_rate: float = DEFAULT_NULL_RATE,
+        bad_range_rate: float = DEFAULT_BAD_RANGE_RATE,
+        orphan_rate: float = DEFAULT_ORPHAN_RATE,
+        hard_delete_day: date = DEFAULT_HARD_DELETE_DAY,
+        hard_delete_count: int = DEFAULT_HARD_DELETE_COUNT,
     ) -> SourceSystem:
         """Create a new, empty source system with its reference data loaded."""
         directory = Path(directory)
@@ -181,18 +237,39 @@ class SourceSystem:
         )
         master = MasterDataSimulator(seed)
         master.next_counterparty_number = counterparties + 1
+        injector = _make_injector(
+            seed,
+            {
+                "null_rate": null_rate,
+                "bad_range_rate": bad_range_rate,
+                "orphan_rate": orphan_rate,
+                "hard_delete_day": hard_delete_day.isoformat(),
+                "hard_delete_count": hard_delete_count,
+            },
+        )
         config = {
             "seed": seed,
             "trades_per_day": trades_per_day,
             "counterparties": counterparties,
             "late_rate": late_rate,
+            "null_rate": null_rate,
+            "bad_range_rate": bad_range_rate,
+            "orphan_rate": orphan_rate,
+            "hard_delete_day": hard_delete_day.isoformat(),
+            "hard_delete_count": hard_delete_count,
             "next_day": start_date.isoformat(),
         }
         with sqlite3.connect(db_path) as con:
             con.executescript(SCHEMA)
             _write_reference(con, reference)
             next_lsn = _write_initial_change_log(con)
-            _save_state(con, config, simulator.get_state(), _master_state(master, next_lsn))
+            _save_state(
+                con,
+                config,
+                simulator.get_state(),
+                _master_state(master, next_lsn),
+                injector.get_state(),
+            )
         return cls(directory)
 
     # ------------------------------------------------------------------
@@ -204,6 +281,10 @@ class SourceSystem:
     def advance(self, days: int = 1) -> list[DayResult]:
         """Simulate the next business day (or several) and save the result."""
         return [self._advance_one_day() for _ in range(days)]
+
+    def write_truth_manifest(self) -> Path:
+        """Write the truth manifest to <directory>/_truth/defects.json."""
+        return write_truth(self.directory, self.db_path)
 
     def status(self) -> dict:
         """A short summary, for people."""
@@ -237,6 +318,9 @@ class SourceSystem:
             master_state = json.loads(
                 con.execute("SELECT value FROM sim_state WHERE key='master'").fetchone()[0]
             )
+            defects_state = json.loads(
+                con.execute("SELECT value FROM sim_state WHERE key='defects'").fetchone()[0]
+            )
         self._config = config
         self._next_day = date.fromisoformat(config["next_day"])
         reference = generate_reference(config["seed"], config["counterparties"])
@@ -247,6 +331,15 @@ class SourceSystem:
             late_rate=config["late_rate"],
         )
         self._simulator.set_state(state)
+        self._group_of = dict(
+            zip(
+                reference.commodities["commodity_code"],
+                reference.commodities["commodity_group"],
+                strict=True,
+            )
+        )
+        self._defects = _make_injector(config["seed"], config)
+        self._defects.set_state(defects_state)
         self._master = MasterDataSimulator(config["seed"])
         self._master.set_state(master_state["simulator"])
         self._next_lsn = master_state["next_lsn"]
@@ -256,7 +349,8 @@ class SourceSystem:
         before = self._simulator.stats
         counts_before = (before.new_trades, before.amendments, before.cancellations)
         try:
-            frame = self._simulator.simulate_day(day)
+            clean_frame = self._simulator.simulate_day(day)
+            frame, injections = self._defects.spoil(clean_frame)
             after = self._simulator.stats
             late_keys = tuple(self._simulator.late_keys)
             next_day = add_business_days(day, 1)
@@ -267,6 +361,13 @@ class SourceSystem:
                 con.executemany(
                     "INSERT INTO sim_truth VALUES (?, 'LATE_ROW', ?, ?, NULL)",
                     [(day.isoformat(), trade_id, version) for trade_id, version in late_keys],
+                )
+                con.executemany(
+                    "INSERT INTO sim_truth VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (day.isoformat(), i.kind, i.trade_id, i.trade_version, i.detail or None)
+                        for i in injections
+                    ],
                 )
                 changes = self._master.changes_for_day(
                     day, _read_table(con, "counterparties"), _read_table(con, "books")
@@ -280,12 +381,17 @@ class SourceSystem:
                     )
                     self._tell_trade_simulator(change)
                     next_lsn += 1
+                deleted_ids = self._hard_delete(con, day)
+                totals = book_totals(load_trades(con), self._group_of, day)
                 _save_state(
                     con,
                     config,
                     self._simulator.get_state(),
                     _master_state(self._master, next_lsn),
+                    self._defects.get_state(),
                 )
+            # The database is saved. Now write the day's control totals file.
+            write_control_totals(self.directory, day, totals)
         except Exception:
             self._load()  # forget the half-finished day and go back to the saved progress
             raise
@@ -302,7 +408,36 @@ class SourceSystem:
             late_rows=len(late_keys),
             late_keys=late_keys,
             master_changes=len(changes),
+            defects_injected=len(injections),
+            trades_deleted=len(deleted_ids),
         )
+
+    def _hard_delete(self, con: sqlite3.Connection, day: date) -> list[str]:
+        """Physically delete a few old trades from the source (defect D17).
+
+        A watermark load cannot see this: a deleted row is simply not there to read.
+        The deleted rows are copied to sim_deleted_trades first, so tests know the truth.
+        """
+        if not self._defects.is_hard_delete_day(day):
+            return []
+        cutoff = (day - timedelta(days=3)).isoformat()
+        rows = con.execute(CANDIDATES_FOR_DELETE, (cutoff,)).fetchall()
+        candidates = [r[0] for r in rows if not self._simulator.has_pending_changes(r[0])]
+        chosen = self._defects.pick_trades_to_delete(candidates)
+        for trade_id in chosen:
+            versions = con.execute(
+                "SELECT trade_version FROM trades WHERE trade_id = ?", (trade_id,)
+            ).fetchall()
+            con.execute(
+                "INSERT INTO sim_deleted_trades SELECT *, ? FROM trades WHERE trade_id = ?",
+                (day.isoformat(), trade_id),
+            )
+            con.execute("DELETE FROM trades WHERE trade_id = ?", (trade_id,))
+            con.executemany(
+                "INSERT INTO sim_truth VALUES (?, 'HARD_DELETE', ?, ?, NULL)",
+                [(day.isoformat(), trade_id, version) for (version,) in versions],
+            )
+        return chosen
 
     def _tell_trade_simulator(self, change: Change) -> None:
         """New trades must not use a deleted counterparty, and may use a new one."""
@@ -328,12 +463,31 @@ def _write_reference(con: sqlite3.Connection, reference: ReferenceData) -> None:
         table.to_sql(name, con, index=False, if_exists="replace")
 
 
-def _save_state(con: sqlite3.Connection, config: dict, state: dict, master_state: dict) -> None:
-    con.execute("INSERT OR REPLACE INTO sim_state VALUES ('config', ?)", (json.dumps(config),))
-    con.execute("INSERT OR REPLACE INTO sim_state VALUES ('state', ?)", (json.dumps(state),))
-    con.execute(
-        "INSERT OR REPLACE INTO sim_state VALUES ('master', ?)", (json.dumps(master_state),)
+def _make_injector(seed: int, settings: dict) -> DefectInjector:
+    return DefectInjector(
+        seed,
+        null_rate=settings["null_rate"],
+        bad_range_rate=settings["bad_range_rate"],
+        orphan_rate=settings["orphan_rate"],
+        hard_delete_day=date.fromisoformat(settings["hard_delete_day"]),
+        hard_delete_count=settings["hard_delete_count"],
     )
+
+
+def _save_state(
+    con: sqlite3.Connection,
+    config: dict,
+    state: dict,
+    master_state: dict,
+    defects_state: dict,
+) -> None:
+    for key, value in (
+        ("config", config),
+        ("state", state),
+        ("master", master_state),
+        ("defects", defects_state),
+    ):
+        con.execute("INSERT OR REPLACE INTO sim_state VALUES (?, ?)", (key, json.dumps(value)))
 
 
 def _master_state(master: MasterDataSimulator, next_lsn: int) -> dict:
@@ -399,4 +553,6 @@ def _to_sql_rows(frame: pd.DataFrame) -> list[list]:
     for column in ("delivery_start", "delivery_end", "last_modified"):
         out[column] = out[column].dt.strftime(TIME_FORMAT)
     out["trade_date"] = out["trade_date"].map(lambda d: d.isoformat())
-    return out.astype(object).values.tolist()
+    out = out.astype(object)
+    out = out.where(out.notna(), None)  # a missing value becomes NULL in the database
+    return out.values.tolist()

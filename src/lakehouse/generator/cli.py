@@ -32,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     advance.add_argument("--dir", required=True)
     advance.add_argument("--days", type=int, default=1)
 
+    manifest = sub.add_parser("manifest", help="write the truth manifest (_truth/defects.json)")
+    manifest.add_argument("--dir", required=True)
+
     status = sub.add_parser("status", help="show where the simulation is")
     status.add_argument("--dir", required=True)
     return parser
@@ -58,9 +61,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result.business_date}: {result.rows} rows "
                 f"({result.new_trades} new, {result.amendments} amended, "
                 f"{result.cancellations} cancelled, {result.late_rows} late, "
-                f"{result.master_changes} reference data changes)"
+                f"{result.master_changes} reference data changes, "
+                f"{result.defects_injected} defects, {result.trades_deleted} deleted)"
             )
         print(f"Next business day to simulate: {system.next_business_date}")
+        print(f"Truth manifest written to {system.write_truth_manifest()}")
+        return 0
+
+    if args.command == "manifest":
+        print(f"Truth manifest written to {system.write_truth_manifest()}")
         return 0
 
     for key, value in system.status().items():

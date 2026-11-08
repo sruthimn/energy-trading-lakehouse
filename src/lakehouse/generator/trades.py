@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import random
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from lakehouse.generator.reference import ReferenceData
+
+LONDON = ZoneInfo("Europe/London")
 
 # Conversion factors. The trading system knows the real physics. The Silver
 # layer has to use the same factors to put every volume in a standard unit.
@@ -121,6 +124,19 @@ def business_days(start: date, end: date) -> list[date]:
     return days
 
 
+def elapsed_hours(start: datetime, end: datetime) -> float:
+    """The real number of hours between two UK local times.
+
+    On the day the clocks go forward a day has 23 hours, and on the day they go
+    back it has 25. Subtracting the clock times directly would be wrong by one
+    hour for any period that contains a clock change (defect D07). The correct
+    way is to convert both times to UTC first, then subtract.
+    """
+    start_utc = start.replace(tzinfo=LONDON).astimezone(UTC)
+    end_utc = end.replace(tzinfo=LONDON).astimezone(UTC)
+    return (end_utc - start_utc).total_seconds() / 3600
+
+
 def to_standard_volume(
     volume: float,
     unit: str,
@@ -130,15 +146,14 @@ def to_standard_volume(
 ) -> float:
     """What the volume is worth in the standard unit (the truth the pipeline must match).
 
-    * Power in MW is a rate, so it is multiplied by the hours of the delivery
-      period to give megawatt-hours.
+    * Power in MW is a rate, so it is multiplied by the real hours of the delivery
+      period to give megawatt-hours. Real hours means clock changes are counted.
     * Gas in MWh is converted to therms.
     * Crude in cubic metres is converted to barrels.
     """
     if commodity_group == "POWER":
         if unit == "MW":
-            hours = (delivery_end - delivery_start).total_seconds() / 3600
-            return volume * hours
+            return volume * elapsed_hours(delivery_start, delivery_end)
         return volume  # already MWh
     if commodity_group == "GAS":
         return volume * THERM_PER_MWH if unit == "MWh" else volume
@@ -249,6 +264,10 @@ class TradeSimulator:
         self._traders = [f"TR-{number:04d}" for number in range(5001, 5031)]
 
     # ------------------------------------------------------------------
+    def has_pending_changes(self, trade_id: str) -> bool:
+        """True if this trade will still be amended or cancelled on a later day."""
+        return trade_id in self._latest
+
     def retire_counterparty(self, counterparty_id: str) -> None:
         """Stop using a counterparty for NEW trades (it was deleted at the source)."""
         self._counterparties = [c for c in self._counterparties if c != counterparty_id]

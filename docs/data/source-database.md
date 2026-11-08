@@ -41,9 +41,19 @@ You can close everything and run `advance` tomorrow. It carries on from the next
 
 `commodities` is the only table loaded in full. Dates are stored as text: `2026-03-16 14:05:31` for times and `2026-03-16` for dates.
 
+## Files the source also writes
+
+| File | What it is |
+|---|---|
+| `control_totals/date=YYYY-MM-DD/control_totals.csv` | The end-of-day totals per book, as a finance extract. You reconcile Gold against it |
+
+## The data is not clean
+
+The `trades` table accepts empty values in `book_id`, `commodity_code`, `volume`, `unit` and `delivery_start`, as many real systems do. About 0.05% of rows have one empty, 0.02% have a delivery period that ends before it starts, and 0.02% of new trades point to a counterparty that does not exist. Five old trades are deleted on 2 April. See `docs/data/truth-manifest.md`.
+
 ## Tables you must not read
 
-`sim_state` and `sim_truth` belong to the simulator, not to the trading system. They hold the simulator's progress and a private record of what was injected, used by tests. A real pipeline would not have access to them, so yours must not use them.
+`sim_state`, `sim_truth` and `sim_deleted_trades` belong to the simulator, not to the trading system. They hold the simulator's progress and a private record of what was injected, used by tests. A real pipeline would not have access to them, so yours must not use them.
 
 ## The first problem you will meet: late rows (defect D03)
 
@@ -72,5 +82,6 @@ The first day has no late rows, because there is no "yesterday" yet. Amendments 
 
 ## What is not here yet
 
-- Hard-deleted trades and the other problems from the truth manifest (issue #13).
+- Market price and FX files, with missing rates and outliers (issue #10).
 - Schema changes (issue #14).
+- The event stream (issue #15).
