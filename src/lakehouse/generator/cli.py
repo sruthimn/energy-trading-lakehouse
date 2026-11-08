@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{result.business_date}: {result.rows} rows "
                 f"({result.new_trades} new, {result.amendments} amended, "
-                f"{result.cancellations} cancelled, {result.late_rows} late)"
+                f"{result.cancellations} cancelled, {result.late_rows} late, "
+                f"{result.master_changes} reference data changes)"
             )
         print(f"Next business day to simulate: {system.next_business_date}")
         return 0

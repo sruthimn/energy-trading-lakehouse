@@ -94,6 +94,20 @@ NAME_STARTS = [
     "Nettlebrook",
     "Orrwell",
 ]
+# Spare names, used only when a new counterparty is onboarded later in the simulation.
+# They are kept apart so the first 40 counterparties never change.
+EXTRA_NAME_STARTS = [
+    "Penhallow",
+    "Rookwood",
+    "Silverdale",
+    "Tarnmoor",
+    "Umberfield",
+    "Vexhall",
+    "Wyndmere",
+    "Yewbrook",
+    "Alderwick",
+    "Briarcliff",
+]
 NAME_SECTORS = [
     "Energy Trading",
     "Utilities",

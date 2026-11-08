@@ -244,8 +244,19 @@ class TradeSimulator:
             )
         )
         self._books = self.reference.books.to_dict("records")
+        # Counterparties that new trades may use. This list changes over time.
         self._counterparties = self.reference.counterparties["counterparty_id"].tolist()
         self._traders = [f"TR-{number:04d}" for number in range(5001, 5031)]
+
+    # ------------------------------------------------------------------
+    def retire_counterparty(self, counterparty_id: str) -> None:
+        """Stop using a counterparty for NEW trades (it was deleted at the source)."""
+        self._counterparties = [c for c in self._counterparties if c != counterparty_id]
+
+    def add_counterparty(self, counterparty_id: str) -> None:
+        """Start using a newly onboarded counterparty for new trades."""
+        if counterparty_id not in self._counterparties:
+            self._counterparties.append(counterparty_id)
 
     # ------------------------------------------------------------------
     def get_state(self) -> dict:
@@ -261,6 +272,7 @@ class TradeSimulator:
             },
             "latest": {trade_id: _encode_row(row) for trade_id, row in self._latest.items()},
             "stats": asdict(self.stats),
+            "counterparties": list(self._counterparties),
         }
 
     def set_state(self, state: dict) -> None:
@@ -275,6 +287,8 @@ class TradeSimulator:
         }
         self._latest = {trade_id: _decode_row(row) for trade_id, row in state["latest"].items()}
         self.stats = SimulationStats(**state["stats"])
+        if "counterparties" in state:
+            self._counterparties = list(state["counterparties"])
 
     # ------------------------------------------------------------------
     def simulate_day(self, day: date) -> pd.DataFrame:
