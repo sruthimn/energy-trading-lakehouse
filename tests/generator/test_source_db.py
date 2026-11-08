@@ -86,7 +86,7 @@ def test_stored_values_have_the_expected_format(tmp_path):
 
 
 def test_every_trade_row_has_all_values(tmp_path):
-    system = make(tmp_path, trades_per_day=100)
+    system = make(tmp_path, trades_per_day=100, null_rate=0.0, bad_range_rate=0.0)
     system.advance(3)
     nulls = query(
         system, "SELECT COUNT(*) FROM trades WHERE trade_id IS NULL OR last_modified IS NULL"
