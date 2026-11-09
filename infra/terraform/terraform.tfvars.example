@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and fill it in.
+# terraform.tfvars is ignored by git. Never commit real values.
+
+subscription_id     = "00000000-0000-0000-0000-000000000000"
+resource_group_name = "your-existing-resource-group"
+
+# Optional. The client public IP address, to reach Azure SQL
+# from that machine. Leave it empty if it is not needed yet.
+allowed_client_ip = ""
