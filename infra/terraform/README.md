@@ -8,10 +8,10 @@ This configuration creates the Azure resources for the project inside a resource
 
 | Resource | Name pattern | Purpose |
 |---|---|---|
-| Storage account (data lake) | `stlakehouse<5 random>` | The lake, with containers `landing`, `bronze`, `silver`, `gold`, `quarantine` |
-| Key Vault | `kv-lakehouse-<5 random>` | Secrets. The SQL password is generated and stored here |
-| SQL server and database `etrm` | `sql-lakehouse-<5 random>` | The simulated trading system. Serverless, pauses after an hour of inactivity |
-| Data Factory | `adf-lakehouse-<5 random>` | Data movement. Linked services to the SQL database, the lake and the vault |
+| Storage account (data lake) | `st<prefix><5 random>` | The lake, with containers `landing`, `bronze`, `silver`, `gold`, `quarantine` |
+| Key Vault | `kv-<prefix>-<5 random>` | Secrets. The SQL password is generated and stored here |
+| SQL server and database `etrm` | `sql-<prefix>-<5 random>` | The simulated trading system. Serverless, pauses after an hour of inactivity |
+| Data Factory | `adf-<prefix>-<5 random>` | Data movement. Linked services to the SQL database, the lake and the vault |
 
 All resources are tagged `project`, `purpose = learning` and `managed_by = terraform`. In total the plan contains 19 resources.
 
@@ -20,7 +20,7 @@ Databricks is not created here. The project uses an existing shared workspace.
 ## Shared resource group
 
 - The resource group is read, never created or deleted.
-- Every resource name starts with `lakehouse`, which separates it from other resources in the group.
+- Every resource name contains the `prefix` value (default `energytrading`, 3 to 15 lowercase letters or digits), which separates it from other resources in the group.
 - `terraform destroy` removes only what this configuration created.
 
 ## Prerequisites
@@ -71,7 +71,7 @@ In the Azure portal, open the resource group and check for the four resource typ
 ```bash
 terraform destroy
 ```
-Terraform lists what it will delete. Confirm that only `lakehouse` resources appear.
+Terraform lists what it will delete. Confirm that only resources with your prefix appear.
 
 ## Notes
 
