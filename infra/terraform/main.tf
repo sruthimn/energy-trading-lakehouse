@@ -128,7 +128,7 @@ resource "azurerm_mssql_server" "sql" {
   tags = local.tags
 }
 
-# Lets Azure services, such as Data Factory, reach the server.
+# Allows Azure services, such as Data Factory, to reach the server.
 resource "azurerm_mssql_firewall_rule" "azure_services" {
   name             = "AllowAzureServices"
   server_id        = azurerm_mssql_server.sql.id
@@ -136,7 +136,7 @@ resource "azurerm_mssql_firewall_rule" "azure_services" {
   end_ip_address   = "0.0.0.0"
 }
 
-# Lets you reach the server from your own machine (optional).
+# Allows access to the server from a single client machine (optional).
 resource "azurerm_mssql_firewall_rule" "client" {
   count            = var.allowed_client_ip == "" ? 0 : 1
   name             = "AllowMyIp"
@@ -146,7 +146,8 @@ resource "azurerm_mssql_firewall_rule" "client" {
 }
 
 # Serverless: it pauses itself after an hour of no use, so an idle database
-# costs almost nothing. It also supports change data capture (CDC) later.
+# costs almost nothing. Change data capture uses change-log tables, not
+# the native SQL feature.
 resource "azurerm_mssql_database" "etrm" {
   name      = "etrm"
   server_id = azurerm_mssql_server.sql.id

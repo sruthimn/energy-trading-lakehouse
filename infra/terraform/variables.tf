@@ -9,7 +9,7 @@ variable "resource_group_name" {
 }
 
 variable "prefix" {
-  description = "A short name used at the start of every resource, so ours are easy to tell apart from other people's."
+  description = "A short name used at the start of every resource, so these resources are easy to tell apart from others in the group."
   type        = string
   default     = "lakehouse"
 
@@ -26,7 +26,7 @@ variable "sql_admin_login" {
 }
 
 variable "allowed_client_ip" {
-  description = "Your public IP address, so you can reach Azure SQL from your own machine. Leave empty to skip."
+  description = "The client public IP address, so Azure SQL can be reached from that machine. Leave empty to skip."
   type        = string
   default     = ""
 }
