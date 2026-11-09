@@ -14,8 +14,9 @@ variable "prefix" {
   default     = "lakehouse"
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9]{2,9}$", var.prefix))
-    error_message = "Use 3 to 10 lowercase letters or digits, starting with a letter."
+    # The limit is 15 characters because Key Vault names allow 24: "kv-", the prefix, "-" and a 5 character suffix.
+    condition     = can(regex("^[a-z][a-z0-9]{2,14}$", var.prefix))
+    error_message = "Use 3 to 15 lowercase letters or digits, starting with a letter."
   }
 }
 

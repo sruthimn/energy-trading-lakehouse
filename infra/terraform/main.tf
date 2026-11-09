@@ -24,7 +24,13 @@ resource "random_string" "suffix" {
 }
 
 locals {
-  suffix   = random_string.suffix.result
+  suffix = random_string.suffix.result
+
+  # One naming convention for every resource: <type code>-<prefix>-<suffix>.
+  # Storage account names cannot contain hyphens, so that one is <type code><prefix><suffix>.
+  name_base    = "${var.prefix}-${local.suffix}"
+  name_compact = "${var.prefix}${local.suffix}"
+
   location = data.azurerm_resource_group.this.location
   rg_name  = data.azurerm_resource_group.this.name
 
@@ -45,7 +51,7 @@ locals {
 # Data lake
 # ---------------------------------------------------------------------------
 resource "azurerm_storage_account" "lake" {
-  name                = "st${var.prefix}${local.suffix}"
+  name                = "st${local.name_compact}"
   resource_group_name = local.rg_name
   location            = local.location
 
@@ -70,7 +76,7 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "zone" {
 # Key Vault: where secrets live. Nothing secret is written in code.
 # ---------------------------------------------------------------------------
 resource "azurerm_key_vault" "kv" {
-  name                = "kv-${var.prefix}-${local.suffix}"
+  name                = "kv-${local.name_base}"
   resource_group_name = local.rg_name
   location            = local.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -117,7 +123,7 @@ resource "azurerm_key_vault_secret" "sql_password" {
 }
 
 resource "azurerm_mssql_server" "sql" {
-  name                         = "sql-${var.prefix}-${local.suffix}"
+  name                         = "sql-${local.name_base}"
   resource_group_name          = local.rg_name
   location                     = local.location
   version                      = "12.0"
@@ -166,7 +172,7 @@ resource "azurerm_mssql_database" "etrm" {
 # Data Factory
 # ---------------------------------------------------------------------------
 resource "azurerm_data_factory" "adf" {
-  name                = "adf-${var.prefix}-${local.suffix}"
+  name                = "adf-${local.name_base}"
   resource_group_name = local.rg_name
   location            = local.location
 

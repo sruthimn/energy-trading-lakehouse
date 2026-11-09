@@ -20,7 +20,7 @@ Databricks is not created here. The project uses an existing shared workspace.
 ## Shared resource group
 
 - The resource group is read, never created or deleted.
-- Every resource name starts with `lakehouse`, which separates it from other resources in the group.
+- Every resource name contains the `prefix` value (default `lakehouse`, 3 to 15 lowercase letters or digits), which separates it from other resources in the group.
 - `terraform destroy` removes only what this configuration created.
 
 ## Prerequisites
