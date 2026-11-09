@@ -11,7 +11,7 @@ variable "resource_group_name" {
 variable "prefix" {
   description = "A short name used at the start of every resource, so these resources are easy to tell apart from others in the group."
   type        = string
-  default     = "energy"
+  default     = "energytrading"
 
   validation {
     # The limit is 15 characters because Key Vault names allow 24: "kv-", the prefix, "-" and a 5 character suffix.
