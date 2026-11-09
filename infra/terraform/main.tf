@@ -158,7 +158,8 @@ resource "azurerm_mssql_database" "etrm" {
   name      = "etrm"
   server_id = azurerm_mssql_server.sql.id
 
-  sku_name                    = "GP_S_Gen5_1"
+  # GP_S_Gen5_2 is the smallest serverless size the organisation policy allows.
+  sku_name                    = "GP_S_Gen5_2"
   min_capacity                = 0.5
   auto_pause_delay_in_minutes = 60
   max_size_gb                 = 2

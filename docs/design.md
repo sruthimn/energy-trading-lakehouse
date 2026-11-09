@@ -131,7 +131,7 @@ Next phase: Airflow on AKS, automated deployment, Kafka real-time
 ```
 
 ### 6.1 Azure resources (Terraform)
-Resource group (read, not created), ADLS Gen2 account with containers `landing`, `bronze`, `silver`, `gold` and `quarantine`, Key Vault (access policies, generated SQL password), Azure SQL server and serverless database `etrm` (0.5 vCore minimum, auto-pause after 60 minutes), and Data Factory with linked services to Key Vault, Azure SQL and the lake. Names carry a random suffix. 19 resources in total.
+Resource group (read, not created), ADLS Gen2 account with containers `landing`, `bronze`, `silver`, `gold` and `quarantine`, Key Vault (access policies, generated SQL password), Azure SQL server and serverless database `etrm` (`GP_S_Gen5_2`, the serverless size allowed by policy, 0.5 vCore minimum, auto-pause after 60 minutes), and Data Factory with linked services to Key Vault, Azure SQL and the lake. Names carry a random suffix. 19 resources in total.
 
 Databricks is **not** created by Terraform: the project uses an existing shared workspace, working only in its own folder and schema and changing no workspace settings. The workspace sits in a different Azure region from the lake, so a small cross-region data cost is accepted.
 
