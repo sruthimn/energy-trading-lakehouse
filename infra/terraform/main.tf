@@ -84,7 +84,7 @@ resource "azurerm_key_vault" "kv" {
 
   # Access policies (not Azure roles), because creating role assignments needs
   # rights that a learning account may not have.
-  enable_rbac_authorization = false
+  rbac_authorization_enabled = false
 
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
