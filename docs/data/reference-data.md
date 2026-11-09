@@ -50,7 +50,7 @@ The companies we trade with.
 | `is_active` | Whether we still trade with them | True |
 | `effective_from` | When this version became valid | 2024-01-01 |
 
-Later in the simulation, one counterparty is downgraded and one is deleted. Those changes come through the change log (issue #12) and teach you CDC and SCD Type 2.
+Later in the simulation, one counterparty is downgraded and one is deleted. Those changes come through the change log (issue #12) and exercise CDC and SCD Type 2.
 
 ## Reproducible
 
@@ -58,7 +58,7 @@ The same seed always gives exactly the same data (the default seed is 42). That 
 
 ## Try it (optional)
 
-In your Codespace, once this change is merged:
+Once this change is merged:
 
 ```bash
 python -c "from lakehouse.generator.reference import generate_reference as g; print(g().counterparties.head())"

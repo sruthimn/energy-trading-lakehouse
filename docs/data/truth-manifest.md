@@ -1,6 +1,6 @@
 # The truth manifest, defects and control totals
 
-Real source systems are messy, and your pipeline has to cope. To prove that it does, the source team spoils a few rows **on purpose** and writes down exactly which ones. That list is the **truth manifest**. Tests compare your pipeline's results with it.
+Real source systems are messy, and a pipeline has to cope. To prove that it does, the generator corrupts a few rows deliberately and records exactly which ones. That list is the **truth manifest**. Tests compare the pipeline's results with it.
 
 > **Rule:** the pipeline must never read the manifest, `sim_truth`, `sim_state` or `sim_deleted_trades`. They are the answer sheet. Only tests may read them.
 
@@ -41,7 +41,7 @@ Each spoiled row is only spoiled in the database. A later amendment of the same 
 
 - **`meta`**: the seed, the trades per day, and how many days were simulated.
 - **`defects`**: for each defect, the count, and for the row-level ones the exact `trade_id` and `trade_version` (plus the column, or the fake counterparty id).
-- **`expected`**: the correct results, worked out from the data with the rules below. Your Silver and Gold results should match these.
+- **`expected`**: the correct results, worked out from the data with the rules below. The Silver and Gold results should match these.
 
 ### The rules the truth uses
 
@@ -59,7 +59,7 @@ Note rule 2: if version 2 of a trade is invalid and version 1 is valid, the trut
 | `source_now` | What the source holds today | The control totals, and any pipeline that re-reads everything |
 | `pipeline_view` | `source_now` plus the trades that were hard deleted | A watermark pipeline that loaded the trades **before** they were deleted |
 
-The difference between the two is exactly the 5 trades of D17. A pipeline that only uses a watermark ends up with `pipeline_view`, and the control totals show `source_now`. That gap is how you find the problem.
+The difference between the two is exactly the 5 trades of D17. A pipeline that only uses a watermark ends up with `pipeline_view`, and the control totals show `source_now`. That gap exposes the problem.
 
 ## Control totals
 
@@ -74,7 +74,7 @@ Each day, the source writes an end-of-day file, like the one a trading system se
 
 "Active" follows the rules above: valid rows only, latest version, not cancelled.
 
-You will reconcile Gold against these every day. Any difference above a tolerance blocks the publish (design acceptance criterion 7).
+Gold is reconciled against these every day. Any difference above a tolerance blocks the publish (design acceptance criterion 7).
 
 ## Example: why D07 needs care
 
@@ -101,7 +101,7 @@ March has one hour less than it looks, because the clocks go forward on 29 March
 
 ## Try it
 
-In a Codespace after merging:
+After merging:
 
 ```bash
 python -m lakehouse.generator.cli init --dir data/source --trades-per-day 2000

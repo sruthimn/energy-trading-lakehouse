@@ -1,8 +1,8 @@
 # The source database
 
-This is the fictional trading system that your pipeline reads from. It is a small SQLite file called `etrm.db`. (ETRM is the usual name for a trading system.)
+This is the fictional trading system that the pipeline reads from. It is a small SQLite file called `etrm.db`. (ETRM is the usual name for a trading system.)
 
-It moves forward **one business day at a time**, like a real system. You decide when the next day happens. This is what lets you run your pipeline day after day and watch the watermark move.
+It moves forward **one business day at a time**, like a real system. The next day happens only when it is requested, which allows the pipeline to run day after day and shows the watermark moving.
 
 ## The commands
 
@@ -45,7 +45,7 @@ You can close everything and run `advance` tomorrow. It carries on from the next
 
 | File | What it is |
 |---|---|
-| `control_totals/date=YYYY-MM-DD/control_totals.csv` | The end-of-day totals per book, as a finance extract. You reconcile Gold against it |
+| `control_totals/date=YYYY-MM-DD/control_totals.csv` | The end-of-day totals per book, as a finance extract. Gold is reconciled against it |
 
 ## The data is not clean
 
@@ -53,20 +53,20 @@ The `trades` table accepts empty values in `book_id`, `commodity_code`, `volume`
 
 ## Tables you must not read
 
-`sim_state`, `sim_truth` and `sim_deleted_trades` belong to the simulator, not to the trading system. They hold the simulator's progress and a private record of what was injected, used by tests. A real pipeline would not have access to them, so yours must not use them.
+`sim_state`, `sim_truth` and `sim_deleted_trades` belong to the simulator, not to the trading system. They hold the simulator's progress and a private record of what was injected, used by tests. A real pipeline would not have access to them, so the pipeline must not use them.
 
-## The first problem you will meet: late rows (defect D03)
+## Late rows (defect D03)
 
 About 0.5% of new trades reach the database **a day late**. The deal was done yesterday morning, and its `last_modified` says yesterday morning, but the row only appears today.
 
 Here is why that hurts a watermark:
 
-1. After yesterday's load, your watermark is the newest `last_modified` you saw, for example `2026-03-16 17:29:59`.
+1. After yesterday's load, the watermark is the newest `last_modified` seen, for example `2026-03-16 17:29:59`.
 2. Today a late row arrives with `last_modified = 2026-03-16 09:41:12`.
-3. Your next load asks for rows where `last_modified` is **greater than the watermark**.
+3. The next load asks for rows where `last_modified` is **greater than the watermark**.
 4. `09:41:12` is not greater than `17:29:59`, so the row is **never loaded**. No error appears. The data is simply missing.
 
-A test in the project shows exactly this. Your load must be designed to catch such rows. That is the main reason watermark loads use a **lookback window**: they start a little before the watermark, then remove duplicates afterwards.
+A test in the project shows exactly this. The load must be designed to catch such rows. That is the main reason watermark loads use a **lookback window**: they start a little before the watermark, then remove duplicates afterwards.
 
 Example from a full-size run (20,000 trades per day):
 
