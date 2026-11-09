@@ -11,7 +11,7 @@ variable "resource_group_name" {
 variable "prefix" {
   description = "A short name used at the start of every resource, so these resources are easy to tell apart from others in the group."
   type        = string
-  default     = "lakehouse"
+  default     = "energy"
 
   validation {
     # The limit is 15 characters because Key Vault names allow 24: "kv-", the prefix, "-" and a 5 character suffix.
@@ -23,7 +23,7 @@ variable "prefix" {
 variable "sql_admin_login" {
   description = "The administrator name of the Azure SQL server. The password is generated and kept in Key Vault."
   type        = string
-  default     = "lakehouse_admin"
+  default     = "energy_admin"
 }
 
 variable "allowed_client_ip" {
