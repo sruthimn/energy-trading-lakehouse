@@ -20,7 +20,7 @@ Record significant decisions as short architecture decision records in `docs/dec
 ## Never commit
 - Secrets, tokens, passwords or keys.
 - Azure subscription IDs, tenant IDs or other organisation-specific identifiers. Use environment variables, GitHub secrets or Key Vault.
-- Generated data. Only the small sample dataset in `sample-data/` is committed.
+- Generated data, Terraform state files or `terraform.tfvars`. Only a small sample dataset may be committed.
 
 ## Tests
-Unit tests run in local mode (PySpark and Delta Lake). Tests for the data generator compare the output to the truth manifest.
+Unit tests run in local mode (PySpark and Delta Lake). Tests for the data generator compare the output to the truth manifest. Infrastructure changes are checked with `terraform fmt`, `validate` and a reviewed `plan` before any `apply`.

@@ -49,7 +49,7 @@ The same deal can be expressed in different units, so volumes cannot be added up
 | Crude | bbl | **m3** | 1 m3 = 6.28981 barrels |
 | Emissions | tCO2e | none | none |
 
-The generator contains a function, `to_standard_volume`, that holds the correct answer. Tests use it to check your Silver layer later.
+The generator contains a function, `to_standard_volume`, that holds the correct answer. Tests use it to check the Silver layer later.
 
 ## How the generator behaves
 
@@ -61,7 +61,7 @@ The generator contains a function, `to_standard_volume`, that holds the correct 
 - The same seed always gives the same data.
 - The simulator counts what it creates (new trades, amendments, cancellations). These counts will go into the truth manifest (issue #13) so tests can prove the pipeline finds every one.
 
-## Try it (optional, in your Codespace after merging)
+## Try it
 
 ```bash
 python - <<'EOF'

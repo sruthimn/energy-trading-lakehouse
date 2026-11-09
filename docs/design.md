@@ -1,284 +1,261 @@
-# Energy Trading Lakehouse: Design Document (v0.3, approved)
+# Energy Trading Lakehouse: Design Document
 
-Status: approved design. Implementation follows the backlog.
+Implementation follows [backlog.md](backlog.md).
 Repository: `sruthimn/energy-trading-lakehouse` (public, MIT licence)
 
 ---
 
-## 0. Plain-language summary
+## 0. Summary
 
-We build a data platform for a fictional energy trading company, using synthetic data only. It runs in two modes:
+A data platform for a fictional energy trading company, built on synthetic data and two public APIs. Data is ingested with **Azure Data Factory (ADF)**, stored in **ADLS Gen2** as Delta tables and transformed on **Azure Databricks** (Bronze, Silver) and **dbt** (Gold). Infrastructure is created with **Terraform** and every change is checked by **GitHub Actions**.
 
-- **Local mode** (free, used by automated tests): PySpark and Delta Lake on a normal machine or a CI runner.
-- **Azure mode** (the real demonstration): the same code deployed to your organisation's Azure subscription with Terraform and GitHub Actions. Azure Databricks does the data processing, AKS runs Airflow and the ingestion containers, and ADLS Gen2 holds the landing files.
-
-You run **no data generation code**. I act as the upstream source team: I generate and test the data here, and in Azure it is produced by a GitHub Actions workflow, like a real upstream system. You build and own the platform that consumes it.
-
-## 0b. Working model: who does what
-
-This mirrors a real project. The **source team** supplies data and contracts. The **data engineer** (Sruthi) builds the platform that consumes them.
-
-| Area | Owner | What that means |
-|---|---|---|
-| Synthetic source system, generator, defect injection, truth manifest, data contracts, `simulate-source-day` workflow, sample data | **Source team (Claude)** | Sruthi never writes or runs data generation. She reviews the contracts and the change notices, as a data engineer would |
-| Ingestion (full, watermark, CDC), Bronze, schema gate, Silver, Gold, data quality, orchestration, CI, Terraform, CD, AKS | **Sruthi implements, Claude pairs** | Claude explains the concept, writes the failing tests from the truth manifest, reviews, and helps when stuck. Sruthi writes and understands the pipeline code |
-| Spikes and design decisions | Together | Each decision becomes a short ADR |
-
-**Working rhythm for each issue**
-1. Claude explains the concept in plain language and agrees the approach with Sruthi.
-2. Claude provides the acceptance tests first (they fail).
-3. Sruthi writes the implementation on a branch until the tests pass.
-4. Claude reviews the pull request. Sruthi merges it.
-
-**Development environment.** A dev container configuration is included so Sruthi can open the repository in GitHub Codespaces (or locally) with Python, Java, Spark, dbt and Terraform already installed, and commit as herself. Check the current free Codespaces allowance on your account.
-
-**Attribution.** The git history should reflect who did the work. Code that Sruthi writes is committed as Sruthi. The synthetic data generator is written by Claude, so the README states that the generator was written with AI assistance. How the generator commits are attributed is Sruthi's decision, and I recommend being transparent about it, because interviewers may ask who wrote what.
+The reasons for choosing ADF ingestion on Azure over local Python ingestion are recorded in [ADR 0002](decisions/0002-azure-first-with-adf-ingestion.md). Local mode is used only for unit tests and the data generator.
 
 ## 1. Learning goals and where each one lives
 
-| You want to understand | Where it lives in the project | How you demonstrate it |
+| Topic | Where it lives | How it is demonstrated |
 |---|---|---|
-| **Watermarking** | Incremental load of `trades` | Show the control table, run a failed load, rerun it, and show no data loss or duplicates |
-| **Full load** | Reference data and FX | Show truncate-and-reload with a row-count guard |
-| **CDC** | Counterparty and book master tables | Show inserts, updates and a delete flowing through, and the SCD2 history they create |
-| **Infrastructure as code** | Terraform for Azure | `terraform plan` in a pull request, `apply` after approval, `destroy` at the end |
-| **CI/CD** | GitHub Actions | A pull request runs tests, a merge builds and deploys, production needs approval |
-| **AKS** | Airflow and job containers | Show pods, namespaces (dev and prod), resource limits and autoscaling |
+| Watermarking | Incremental load of `trades` | Control table, a failed run, a rerun with no loss or duplicates |
+| Full load | `commodities` | Truncate and reload with a row-count check |
+| Change data capture | Counterparty and book change logs | Inserts, updates and a delete flowing through, and the SCD2 history they create |
+| REST API ingestion | FX rates and grid forecast | Date-window requests, then **pagination** (offset and limit, next link) with rate-limit handling |
+| Schema validation | After Bronze | A schema change is detected and the batch is quarantined |
+| Data profiling | Bronze data | Written findings on counts, nulls, ranges, versions and late rows |
+| Infrastructure as code | Terraform | `plan` reviewed before every `apply` |
+| CI/CD | GitHub Actions | Format, validate, plan and tests on every pull request |
+| Databricks and dbt | Silver notebooks, Gold models | Tested models running on the shared workspace |
 
 ## 2. Scope
 
-**In scope:** synthetic data generator, three load patterns, Bronze, schema gate, Silver, Gold star schema with SCD2, data quality, Airflow orchestration on AKS, Terraform, CI/CD, real-time track, documentation.
+**In scope:** synthetic source system, four load patterns (full, watermark, CDC, REST API), Bronze, schema validation, data profiling, Silver, Gold (dbt) with SCD2, data quality and reconciliation, Terraform, CI, documentation.
 
-**Out of scope:** real company data, machine learning models (a feature table is in scope), Synapse and Power BI (Gold is served from Databricks SQL).
+**Next phase:** Airflow on AKS, automated deployment (needs a GitHub OIDC app registration), the Kafka real-time track, price data and schema-drift scenarios.
 
-**Portfolio honesty rule.** The README states plainly that the data is synthetic and that the project implements a pattern the author has used professionally. It quotes no production figures from any employer. The repository contains no subscription IDs, tenant IDs or organisation-specific names.
+**Out of scope:** real company data, machine learning models, Synapse and Power BI.
+
+**Disclosure.** The README states that the data is synthetic and that the project implements a pattern the author has used professionally. It quotes no production figures from any employer. The repository contains no subscription IDs, tenant IDs, workspace names or organisation-specific names.
 
 ## 3. Fictional business context
 
-*Northgate Energy Trading* (fictional) trades GB power, NBP and TTF gas, Brent crude and UK carbon allowances across several desks. Pain points the platform solves:
+*Northgate Energy Trading* (fictional) trades GB power, NBP and TTF gas, Brent crude and UK carbon allowances across several desks. Problems the platform addresses:
 1. The same trade shows different volumes in different reports, because units and amendments are handled inconsistently.
 2. Daily batches are fragile and dashboards are stale at the start of the trading day.
 3. A monthly regulatory submission is assembled and reconciled by hand.
 4. Upstream systems change their schemas without notice.
 5. Credit risk needs the counterparty rating **as at the trade date**, not today.
 
-## 4. The three load patterns (core of the project)
+## 4. Load patterns (core of the project)
 
-| Pattern | Source tables | Mechanism | Handles deletes? | Failure behaviour |
+| Pattern | Source | Mechanism | Handles deletes? | Failure behaviour |
 |---|---|---|---|---|
-| **Full load** | `ref.commodities`, `ref.fx_rates`, `ref.calendar` | Read everything, replace, then check row count against the source | Yes (the table is replaced) | Row-count guard blocks a truncated load |
-| **Incremental (watermark)** | `etrm.trades`, `etrm.trade_legs` | Read rows where `last_modified` is newer than the stored watermark minus a lookback window; advance the watermark only after success | **No** (a deleted row is invisible) | Watermark unchanged, so a rerun is safe |
-| **CDC** | `ref.counterparties`, `ref.books` | Read the source change log (operation, sequence number, commit time); apply with `MERGE`; track the last sequence number | **Yes** | Last sequence number unchanged, so a rerun is safe |
+| **Full load** | `commodities` | Truncate, reload, compare row counts with the source | Yes (table replaced) | Row-count check blocks a truncated load |
+| **Incremental (watermark)** | `trades` | Read rows where `last_modified` is after the saved watermark minus a 2-day lookback. Advance the watermark only after the load succeeds | **No** (a deleted row is invisible) | Watermark unchanged, so a rerun is safe |
+| **CDC** | `cdc_counterparties`, `cdc_books` | Read the change log after the last `lsn`. Each row carries an operation: I, U or D | **Yes** | Last `lsn` unchanged, so a rerun is safe |
+| **REST API** | FX rates, wind and solar forecast | ADF REST connector. FX rates: one request per date window. Forecast: pagination rules request page after page until the total is reached | Not applicable | Raw responses retained, row counts validated |
 
-A short "which pattern when, and why" page in `docs/` compares them, because interviewers ask exactly this.
+**Why watermark alone is not enough.** Late-arriving rows have a `last_modified` older than the watermark, so a plain watermark misses them (defect D03). The 2-day lookback catches them, at the cost of reading some rows twice. Bronze keeps the repeats and Silver removes them (see [ADR 0001](decisions/0001-bronze-append-with-lookback.md)). A watermark also cannot see deletes (defect D17), which is why reconciliation against control totals exists and why the master tables use CDC.
 
-**Why watermark alone is not enough.** Late-arriving rows have a `last_modified` older than the watermark, so a naive watermark misses them. The lookback window plus deduplication fixes it (defect D03). A watermark also cannot see deletes, which is why the master tables use CDC.
+**REST API specifics.** The FX source (Frankfurter, ECB reference rates) needs no key and has no paging: one call returns a date range. Rates exist on working days only. The forecast source (NESO data portal, CKAN datastore) needs no key and pages with `limit` and `offset`; each response includes the `total` and a `next` link. Public APIs can be rate-limited, so page requests are spaced and retried with back-off.
 
 ## 5. Source system and synthetic data
 
 ### 5.1 The simulated source
-In Azure: an **Azure SQL Database** acts as the ETRM source. Native change data capture is enabled on the master tables, so CDC is real, not faked. Market and finance data arrive as daily files in a landing storage container.
-In local mode: SQLite with a change-log table that follows the same contract (operation, sequence number, commit time), so the same ingestion code and tests run in CI.
-
-*Unverified:* Azure SQL CDC depends on the service tier. We confirm this in the first spike before relying on it. The fallback is a change-log table maintained by triggers.
+A SQLite database (`etrm.db`) produced by the generator, then loaded into an **Azure SQL Database** (serverless) that acts as the ETRM source. Change data capture uses explicit change-log tables with an operation, a sequence number (`lsn`) and a commit time, so the behaviour is identical locally and in Azure.
 
 ### 5.2 Source inventory
 
-| Source | Load pattern | Key fields |
+| Source | Load pattern | Notes |
 |---|---|---|
-| `etrm.trades` | Incremental | trade_id, trade_version, book_id, commodity_code, buy_sell, volume, unit, price, currency, delivery_start, delivery_end, counterparty_id, trader_id, status, trade_date, last_modified |
-| `etrm.trade_legs` | Incremental | trade_id, leg_no, volume, price |
-| `ref.counterparties` | **CDC** | counterparty_id, name, credit_rating, credit_limit_gbp, country |
-| `ref.books` | **CDC** | book_id, desk_code, trader_group |
-| `ref.commodities`, `ref.calendar` | Full | commodity_code, standard_unit |
-| `market.fx` | Full (daily file) | rate_date, currency, gbp_rate |
-| `market.prices` | Daily file | curve_id, delivery_month, price_date, price |
-| `finance.control_totals` | Daily file | business_date, book_id, total_volume, total_notional |
-| `stream.trade_events` | Stream (phase 8) | event_id, event_type, trade_id, ... |
+| `trades` | Watermark | `trade_id`, `trade_version`, `status` (CONFIRMED, PENDING, AMENDED, CANCELLED), `last_modified`, unit and price fields |
+| `commodities` | Full load | Small reference table |
+| `books`, `counterparties` | Reference tables, changed through CDC | Current state in the source |
+| `cdc_counterparties`, `cdc_books` | CDC | Operation, `lsn`, commit time |
+| FX rates API | REST, date window | Public, no key |
+| Wind and solar forecast API | REST, paginated | Public, no key. Half-hourly settlement periods |
+| `control_totals/date=YYYY-MM-DD/control_totals.csv` | File, used for reconciliation | Row counts per day |
 
-### 5.3 Data delivery without you running anything
-1. I write and **test the generator here** and run it myself.
-2. A small **sample dataset** (a few thousand rows, under a megabyte) is committed for documentation and unit tests. Large data is never committed.
-3. In Azure, a **GitHub Actions workflow** (`simulate-source-day`) advances the source system by one business day, on a schedule or when you click "Run workflow". The pipeline then picks up the changes, as it would in a real project.
-4. A seed makes the output identical every time.
+Tables not read by pipelines: `sim_state`, `sim_truth`, `sim_deleted_trades` and `_truth/defects.json` belong to the generator and are the answer sheet for tests.
 
-Default cloud scale is about **20k trades per business day** to control cost. A larger scale setting exists for volume testing.
+### 5.3 Data delivery
+1. The generator is written and tested in this repository and is seeded, so output is identical every time.
+2. A GitHub Actions workflow (`simulate-source-day`) advances the Azure SQL source by one business day, on demand or on a schedule.
+3. Only a small sample dataset is ever committed. Generated data is never committed.
 
-### 5.4 Defect catalogue (the generator records a truth manifest of exact counts, and tests assert the pipeline matches)
+Default volume is about **20,000 trades per business day** (smaller while developing).
 
-| ID | Defect | Handled by | Test |
+### 5.4 Defect catalogue
+The generator records a truth manifest of exact counts, and tests compare the pipeline output with it.
+
+| ID | Defect | Handled by | Status |
 |---|---|---|---|
-| D01 | Trade amendments (versions 1 to N) | Silver keeps latest version | Equals truth |
-| D02 | Cancellations | Status handling | Equals truth |
-| D03 | Late-arriving rows | Watermark lookback plus dedupe | No loss, no duplicates |
-| D04 | Null mandatory fields | DLQ | DLQ count equals truth |
-| D05 | Delivery end before start | DLQ | Equals truth |
-| D06 | Mixed units | Unit normalisation | Totals equal truth |
-| D07 | Clock-change days (46 and 50 periods) | Settlement calendar | Period counts equal truth |
-| D08 | Counterparty downgrade | SCD2 and as-at-trade-date join | Old trades keep old rating |
-| D09 | Duplicate stream events | Idempotent by event_id | Position unaffected |
-| D10 | Additive schema drift | Schema gate auto-approves | Pipeline continues |
-| D11 | Breaking schema drift | Quarantine that source only | Others still publish |
-| D12 | Missing FX rate | Flagged fallback | Flag count equals truth |
-| D13 | Price outliers | Quality check flags | Equals truth |
-| D14 | Orphan counterparty reference | Relationship test fails visibly | Fails as expected |
-| D15 | Stale file re-delivered | Freshness check | Fails as expected |
-| **D16** | **Counterparty deleted at source** | **CDC applies the delete, history preserved** | **Closed record, no data loss** |
-| **D17** | **Hard-deleted trade row** | **Shows the watermark blind spot; reconciliation to control totals catches it** | **Variance detected** |
+| D01 | Trade amendments (versions 1 to N) | Silver keeps the latest valid version | Implemented |
+| D02 | Cancellations | Status handling | Implemented |
+| D03 | Late-arriving rows (about 0.5%) | Watermark lookback, Silver deduplication | Implemented |
+| D04 | Null mandatory fields | Quarantine | Implemented |
+| D05 | Delivery end before start, bad ranges | Quarantine | Implemented |
+| D06 | Mixed units | Unit normalisation | Implemented |
+| D07 | Clock-change days (46 and 50 periods) | Settlement calendar | Implemented |
+| D08 | Counterparty downgrade | SCD2 and as-at-trade-date join | Implemented |
+| D09 | Duplicate stream events | Idempotent by `event_id` | Planned (next phase) |
+| D10 | Additive schema drift | Schema validation records and continues | Planned |
+| D11 | Breaking schema drift | Schema validation quarantines the batch | Planned |
+| D12 | Missing FX rate | Flagged fallback | Planned |
+| D13 | Price outliers | Quality check flags | Planned |
+| D14 | Orphan counterparty reference | Quarantine with reason | Implemented |
+| D15 | Stale file re-delivered | Freshness check | Planned |
+| D16 | Counterparty deleted at source | CDC applies the delete, history preserved | Implemented |
+| D17 | Hard-deleted trade rows | Reconciliation to control totals catches it | Implemented |
+
+Full-size demonstration (seed 42, 20,000 trades a day, 18 days): 209 empty fields (D04), 87 bad ranges (D05), 76 orphan counterparties (D14), 5 deleted trades (D17), 296 rejected rows.
 
 ### 5.5 Simulated timeline
-Business dates 2026-03-16 to 2026-04-10 (covers the 29 March clock change). Counterparty downgrade 2026-03-24, additive drift 2026-03-30, breaking drift 2026-04-03, counterparty deletion 2026-04-06. The autumn clock change is a separate fixture.
+Default start 2026-03-16. 19 March: book BK-UKGAS-03 moves to desk EUGAS. 24 March: a counterparty is downgraded. 26 March: a counterparty is onboarded. 29 March: clock change (46 half-hours). 2 April: five old trades are hard deleted. 6 April: a counterparty is deleted while 946 trades still reference it. The autumn clock change (50 periods) is a separate fixture.
 
 ## 6. Architecture
 
 ```
 GitHub Actions: simulate-source-day
-        │ advances one business day
-        ▼
-SOURCES                                  AKS (Airflow + job containers)                     AZURE DATABRICKS (Unity Catalog)
-Azure SQL (ETRM, CDC enabled) ─┐         ┌──────────────────────────────────┐               ┌─────────────────────────────────┐
-Daily files in landing storage ─┼──────► │ ingestion containers             │ ─ landing ──► │ BRONZE   append-only, audit cols│
-                                │        │  full · watermark · CDC          │  (ADLS Gen2)  │    │ schema gate (classify drift)│
-                                │        │ control table (watermarks,       │               │    ▼                             │
-                                │        │  last LSN, status)               │               │ SILVER   units, dedupe, DLQ      │
-                                │        └──────────────────────────────────┘               │    │ dbt build + tests           │
-              Airflow DAG ──────┴── triggers ingestion, Databricks jobs, dbt ───────────────►│    ▼                             │
-                                                                                              │ GOLD     star schema, SCD2       │
-CI/CD: GitHub Actions ──► Terraform (Azure) · Docker images (ACR) · Databricks bundle · Helm (Airflow)
-Quality: Great Expectations (Bronze) · dbt tests (Gold) · reconciliation to control totals
-Secrets: Key Vault · GitHub OIDC (no stored Azure passwords)
+        | advances the source by one business day
+        v
+SOURCES                         ADF                              ADLS GEN2 + DATABRICKS (shared workspace)
+Azure SQL (etrm)  ----------->  pl_incremental_trades  --+
+  trades, commodities,          pl_full_reference         |       LANDING  (files as copied)
+  cdc_counterparties,           pl_cdc_counterparties_    +--->     |
+  cdc_books                       books                   |       BRONZE   append-only Delta, audit columns
+FX rates API (REST)  -------->  pl_api_fx_rates           |         |  schema validation, reconciliation, profiling
+Forecast API (REST, paged) -->  pl_api_forecast  ---------+       SILVER   latest version, quality rules, SCD2,
+                                                                    |        quarantine
+control table ctl.watermark (Azure SQL): watermark and lsn per source GOLD     dbt models and tests
+Secrets: Key Vault          CI: GitHub Actions (fmt, validate, plan, tests)
+Next phase: Airflow on AKS, automated deployment, Kafka real-time
 ```
 
 ### 6.1 Azure resources (Terraform)
-Resource group, ADLS Gen2 account (landing, quarantine), Azure Container Registry, AKS (small system pool, autoscaling user pool, `dev` and `prod` namespaces), Key Vault, Azure SQL Database (source), Azure Databricks workspace, a budget alert, and a remote Terraform state account. Private endpoints are documented but optional because of cost.
+Resource group (read, not created), ADLS Gen2 account with containers `landing`, `bronze`, `silver`, `gold` and `quarantine`, Key Vault (access policies, generated SQL password), Azure SQL server and serverless database `etrm` (0.5 vCore minimum, auto-pause after 60 minutes), and Data Factory with linked services to Key Vault, Azure SQL and the lake. Names carry a random suffix. 19 resources in total.
 
-Unity Catalog: two catalogs, `lakehouse_dev` and `lakehouse_prod`, each with `bronze`, `silver`, `gold` schemas. *Open question:* a Unity Catalog metastore may already exist at your organisation, which changes how the workspace is attached (see section 12).
+Databricks is **not** created by Terraform: the project uses an existing shared workspace, working only in its own folder and schema and changing no workspace settings. The workspace sits in a different Azure region from the lake, so a small cross-region data cost is accepted.
 
 ### 6.2 Local versus Azure
 
-| Concern | Local mode (CI) | Azure mode |
+| Concern | Local mode | Azure |
 |---|---|---|
-| Source | SQLite with change-log table | Azure SQL with native CDC |
+| Purpose | Unit tests and the generator | The real demonstration |
+| Source | SQLite | Azure SQL |
+| Ingestion | Not used | ADF |
 | Compute and Delta | PySpark and Delta Lake | Azure Databricks |
-| Gold SQL | dbt on DuckDB | dbt on Databricks |
-| Orchestration | DAG integrity test | Airflow on AKS |
+| Gold | Not used | dbt on Databricks (`dbt-databricks`) |
 | Secrets | `.env` (ignored by git) | Key Vault |
 
-Design rule: **business logic does not depend on the platform.** Platform specifics live in thin adapters. *Risk:* dbt SQL must run on two engines. We keep models in a portable SQL subset and isolate any engine-specific code in macros (spike 0.3).
+Business logic that can be unit-tested (for example version selection and unit conversion) is written as plain functions so it runs in both places.
 
 ## 7. Layer design
 
-### 7.1 Ingestion (all three patterns)
-A control table holds, per source: load type, watermark or last sequence number, last run id, status and rows loaded. The ingestion container reads it, extracts, writes run-scoped Parquet to landing, and **updates the control table only after the write succeeds**.
+### 7.1 Ingestion (ADF)
+A control table `ctl.watermark` in Azure SQL holds, per source: load type, watermark or last `lsn`, last status and rows loaded.
+
+| Pipeline | Steps |
+|---|---|
+| `pl_incremental_trades` | LookupOldWatermark, LookupNewWatermark, CopyIncremental (rows after watermark minus 2 days), UpdateWatermark (stored procedure, runs only after a successful copy) |
+| `pl_full_reference` | Copy, truncate and reload, compare row counts |
+| `pl_cdc_counterparties_books` | Read changes after the last `lsn`, land I, U and D rows in order, save the new `lsn` after landing |
+| `pl_api_fx_rates` | REST linked service, one request per date window, land raw JSON, validate row count |
+| `pl_api_forecast` | REST pagination rules (offset and limit, follow the `next` link until the total is reached), spaced requests, land every page as raw JSON |
+
+Secrets are read from Key Vault through linked services, and ADF uses a managed identity.
 
 ### 7.2 Bronze
-Exact append-only copy plus audit columns (`_ingested_at`, `_source_system`, `_batch_run_id`, `_source_file`, and for CDC `_operation` and `_lsn`). No casting, renaming or filtering. Bronze is the single replay point.
+Exact append-only copy plus audit columns (`_ingested_at`, `_source_system`, `_batch_run_id`, `_source_file`, and for CDC `_operation` and `_lsn`). No casting, renaming or filtering. Repeated rows from the lookback are expected: compare **distinct keys** with the source, not raw counts.
 
-### 7.3 Schema evolution gate
-Compare the landed schema with the registered data contract. Additive changes are registered and continue. Breaking changes (dropped, renamed, type-changed) quarantine that source, set `QUARANTINED` in the control table and alert. Silver always selects columns explicitly, never `SELECT *`.
+### 7.3 Schema validation
+After each Bronze load, compare the incoming schema with the expected schema: columns, types and nullability. Missing or unknown columns are flagged. A failing batch is moved to quarantine and the result (pass or fail, with reasons) is recorded per batch. Silver always selects columns explicitly, never `SELECT *`.
 
-### 7.4 Silver
-1. Split valid and invalid rows (invalid go to a DLQ with reason and timestamp).
-2. Apply CDC changes with `MERGE` (inserts, updates, deletes).
-3. Keep the latest trade version.
+### 7.4 Data profiling
+A time-boxed exploration of the Bronze data: row counts, null rates, value ranges, trade versions, late-arriving rows and distribution of statuses. Findings are written to `docs/data-profile.md` and drive the Silver rules.
+
+### 7.5 Silver
+1. Separate valid and invalid rows. Invalid rows go to quarantine with a reason and timestamp.
+2. Apply CDC changes (inserts, updates, deletes) and build SCD2 history for counterparties and books.
+3. Keep the highest valid `trade_version` per trade.
 4. Normalise units, convert to UTC, expand to half-hourly settlement periods.
-5. Convert to GBP with flagged FX fallback.
-6. Idempotent writes. Fail if the reject rate exceeds a threshold.
+5. Idempotent writes. Fail if the reject rate exceeds a threshold.
 
-### 7.5 Gold (dbt)
-Staging, intermediate and marts. Macros: surrogate key, safe divide, date spine, schema creation. Tests: unique, not_null, relationships, accepted_values, ranges, no overlapping SCD2 ranges, and reconciliation to control totals. A failing test blocks the publish.
+### 7.6 Gold (dbt on Databricks)
+Staging, intermediate and marts. Tests: unique, not_null, relationships, accepted_values, ranges, no overlapping SCD2 ranges, and reconciliation to control totals. A failing test blocks publication.
 
-### 7.6 Data model
+### 7.7 Data model
 
 | Table | Type | Grain |
 |---|---|---|
-| `fact_trade` | Transaction fact | One row per trade leg (latest version) |
+| `fact_trade` | Transaction fact | One row per trade (latest valid version) |
 | `fact_daily_position` | Periodic snapshot | Book x commodity x delivery period x business date |
-| `dim_counterparty` | **SCD2** (fed by CDC) | Counterparty x effective range |
-| `dim_book` | **SCD2** (fed by CDC) | Book x effective range |
+| `dim_counterparty` | SCD2 (fed by CDC) | Counterparty x effective range |
+| `dim_book` | SCD2 (fed by CDC) | Book x effective range |
 | `dim_commodity`, `dim_delivery_period`, `dim_date` | Type 1 / generated | |
 
-### 7.7 Data quality
-Great Expectations on Bronze, pipeline counters on Silver, dbt tests on Gold, and daily reconciliation to control totals.
+### 7.8 Data quality
+Layered checks: row counts at landing, schema validation after Bronze, quality rules in Silver, dbt tests in Gold, and daily reconciliation to control totals. Rejected rows are retained with the reason attached.
 
-### 7.8 Orchestration
-One daily Airflow DAG on AKS: ingest (per source, in parallel) → schema gate and validation → Databricks Silver jobs → dbt build → publish. Three retries with back-off, SLAs, `max_active_runs=1`, and a gate task that skips a quarantined source. DAGs synchronise from Git.
-
-### 7.9 Governance
-Pseudonymised trader identifiers (keyed hash), a masking view for price, desk-level filtering as Unity Catalog row filters, and Key Vault for secrets.
+### 7.9 Orchestration
+ADF triggers run the pipelines on a schedule. In the next phase an Airflow DAG on AKS orders ADF, Databricks and dbt with retries and alerts.
 
 ## 8. CI/CD and infrastructure as code
 
 ### 8.1 Continuous integration (every pull request)
-Lint, unit tests (PySpark and Delta in local mode), generator tests against the truth manifest, dbt parse and local-mode build, DAG integrity test, `terraform fmt` and `validate`, a `terraform plan` posted to the pull request, Docker image build (no push), image vulnerability scan and a secret scan.
+Lint, unit tests, generator tests against the truth manifest, `terraform fmt` and `validate`, a `terraform plan`, dbt parse and tests, and a secret scan.
 
-### 8.2 Continuous delivery (on merge to `main`)
-1. Authenticate to Azure with **GitHub OIDC** (no stored Azure passwords).
-2. Build and push images to the container registry.
-3. Deploy the Databricks bundle to `dev` automatically.
-4. **Manual approval**, then deploy to `prod`.
-5. Deploy Airflow and job images to AKS with Helm.
-Terraform `apply` runs from a protected workflow with an approval gate. A **destroy** workflow tears everything down.
+### 8.2 Continuous delivery (next phase)
+Authenticate to Azure with GitHub OIDC (needs an app registration), `terraform apply` from a protected workflow with an approval gate, then deploy notebooks and dbt.
 
 ### 8.3 Cost controls
-Smallest node sizes, Databricks job clusters that terminate after each run, SQL warehouse auto-stop, an AKS stop/start workflow, a budget alert and the destroy workflow.
+Serverless SQL with auto-pause, small data volumes, no resources that are not needed, and a plan reviewed before every apply.
 
 ## 9. Acceptance criteria
 
-1. Every defect D01 to D17 matches the truth manifest exactly.
-2. Rerunning any day gives identical results, for all three load patterns.
-3. A failed incremental load leaves the watermark unchanged and a rerun loads everything once.
+1. Every implemented defect matches the truth manifest exactly.
+2. Rerunning any day gives identical results for all four load patterns.
+3. A failed incremental load leaves the watermark unchanged, and a rerun loads everything once.
 4. A CDC delete closes the dimension record without losing history.
 5. The watermark blind spot (D17) is demonstrated and caught by reconciliation.
-6. A breaking schema change quarantines exactly one source while the others publish.
-7. Gold reconciles to control totals, and a deliberately broken run is blocked.
-8. CI passes on a pull request, and a merge deploys to `dev` automatically and to `prod` after approval.
-9. `terraform apply` creates the environment and `destroy` removes it cleanly.
+6. The paginated API pipeline loads every page of the forecast and its row count matches the reported total.
+7. A schema change in a source batch is detected after Bronze and the batch is quarantined.
+8. Gold reconciles to control totals, and a deliberately broken run is blocked.
+9. CI passes on a pull request, and `terraform plan` is reviewed before `apply`.
 10. A new reader understands the system from the README in ten minutes.
 
 ## 10. Repository structure
 
 ```
 README.md  LICENSE  CONTRIBUTING.md  Makefile  pyproject.toml
-docs/          architecture, load patterns, data model, ADRs, runbook, cost guide
-contracts/     data contracts (YAML)
-src/lakehouse/ generator/ ingestion/ schema_gate/ silver/ quality/ common/ streaming/
-databricks/    bundle definition, jobs
-dbt/           models, macros, tests
-airflow/       dags, Helm values
-infra/terraform/  modules and environments
-docker/        images
-tests/         unit, integration, dag
-.github/       workflows, issue and PR templates
-sample-data/   small committed sample
+docs/            design, backlog, data notes, data profile, ADRs
+src/lakehouse/   generator/ (done), validation/, silver/ (shared logic and tests)
+infra/terraform/ foundation (19 resources)
+adf/             pipeline and linked service definitions (exported JSON)
+databricks/      Bronze, validation and Silver notebooks
+dbt/             Gold models, macros, tests
+tests/           unit tests
+.github/         workflows, issue and pull request templates
 ```
 
 ## 11. Engineering standards
-`main` is protected. All changes go through pull requests, even solo, with CI required. Small commits, imperative messages, short ADRs for decisions, tests before core logic. Commits are authored as Sruthi, with no AI trailer.
+`main` is protected. All changes go through pull requests with checks required. Small commits, imperative messages, short ADRs for decisions, tests before core logic. Commits are authored by the repository owner.
 
 ## 12. Verified, unverified and open items
 
 | Item | Status |
 |---|---|
-| PySpark 3.5 with Delta Lake runs in the build environment | **Verified** |
-| dbt on DuckDB reading Silver, and portable SQL across DuckDB and Databricks | **Not verified** (spike 0.3) |
-| Great Expectations on Spark | **Not verified** (spike 0.4) |
-| Azure SQL native CDC on the tier available to you | **Not verified** (spike 0.6) |
-| Terraform, AKS, Databricks, Airflow, Helm | **Written but untested** until you run them in your subscription. I will try to validate Terraform syntax here |
-| GitHub OIDC to Azure | Needs an app registration and role assignment. **Open:** can you create these, or does an administrator do it? |
-| Unity Catalog metastore | **Open:** does one already exist in your tenant and region? |
-| Azure policies, region and budget limits | **Open** |
-| Azure Databricks cost | Depends on usage. Check the pricing calculator before the first deployment |
+| Generator and its tests (PySpark 3.5.3, Delta 3.2.1, 105 tests) | **Verified** |
+| Terraform foundation syntax | **Validated only**. Not yet planned or applied |
+| Frankfurter FX API and NESO forecast API reachable without a key | **Verified** with a test call. Rate limits **not verified** |
+| Shared Databricks workspace can read and write the lake | **Open** |
+| dbt can run against the shared workspace (SQL warehouse or cluster) | **Open** |
+| Permission to register Azure resource providers | **Open** |
+| GitHub OIDC to Azure | **Open** (needs an app registration). Next phase |
 
-## 13. Delivery order (each step reviewable by pull request)
-
-1. Foundations and spikes
-2. Synthetic source system and generator (I generate and test the data)
-3. Local-mode pipeline: full load, incremental, CDC
-4. Silver, schema gate and data quality
-5. Gold with dbt, SCD2 and reconciliation
-6. CI
-7. Terraform
-8. CD, AKS and Airflow
-9. End-to-end Azure demonstration, then teardown
-10. Real-time track, documentation and results
+## 13. Delivery order
+1. Azure foundation: Terraform plan and apply, source loaded into Azure SQL
+2. ADF ingestion: control table, full load, FX API, incremental trades
+3. CDC, paginated forecast API, Bronze, schema validation, reconciliation, profiling
+4. Silver, quarantine, SCD2
+5. Gold with dbt, CI on pull requests
+6. End-to-end run and documentation
+7. Next phase: Airflow on AKS, automated deployment, Kafka real-time, price data, schema drift
