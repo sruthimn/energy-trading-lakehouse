@@ -18,6 +18,9 @@ python -m lakehouse.generator.cli advance --dir data/source --days 5
 
 # 4. See where it is
 python -m lakehouse.generator.cli status --dir data/source
+
+# 5. Write the daily files (see "Daily files" below)
+python -m lakehouse.generator.cli export --dir data/source --out data/landing
 ```
 
 Use `--trades-per-day 20000` for the larger demo size. At that size one day takes about one second.
@@ -46,6 +49,24 @@ You can close everything and run `advance` tomorrow. It carries on from the next
 | File | What it is |
 |---|---|
 | `control_totals/date=YYYY-MM-DD/control_totals.csv` | The end-of-day totals per book, as a finance extract. Gold is reconciled against it |
+
+## Daily files
+
+Some systems send files instead of letting a pipeline read their database. The `export` command writes two feeds, one folder per business day. It is the file source for Auto Loader and for the join of two file sources.
+
+| File | What it holds |
+|---|---|
+| `trade_feed/date=2026-03-16/trades_20260316.csv` | The trade rows that reached the system that day, with a header row. An empty source value is an empty field |
+| `counterparty_changes/date=2026-03-16/counterparties_20260316.json` | That day's counterparty changes from the change log, one JSON object per line, in `lsn` order. The first file also holds the initial load. A day with no changes has no file |
+
+Rules that matter:
+- **A late row is in the file of the day it arrived.** The late rows (defect D03) have an earlier `last_modified` than the day of their file, as in the database. A pipeline that reads each file once, like Auto Loader, does not miss them.
+- **A file is written once.** Running `export` again skips files that exist, so a new day adds only its own files. `--force` rewrites them with the same content.
+- **A file never appears half written.** It is written under a name that starts with an underscore, which Auto Loader ignores, and renamed when complete.
+- **The files are deterministic.** The same seed gives the same bytes.
+- Trades deleted at the source (defect D17) are not in any file, because the file only carries rows that exist.
+
+The files hold the same business data as the database, through another delivery channel. The database path (ADF, watermark) stays the main one for trades.
 
 ## The data is not clean
 

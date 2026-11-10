@@ -144,7 +144,7 @@ Deployment: Terraform (Azure), Databricks Asset Bundle (Databricks)
 ### 6.1 Azure resources (Terraform)
 Per environment: ADLS Gen2 account with containers `landing`, `bronze`, `silver`, `gold` and `quarantine`, Key Vault (access policies), and Data Factory with linked services to Key Vault, the lake and the shared SQL database. The resource group and the shared SQL server are read, not created. The SQL server is outside this repository: the linked service reads its address, database name and login from variables, and the password is a Key Vault secret added by hand. Names are a type code, a prefix, the environment and a short suffix, for example `kv-energytrading-dev-sr`. The current code creates 13 resources for one environment.
 
-The databases `etrm_dev` and `etrm_prod` on the shared server are created by the project (serverless, `GP_S_Gen5_2`, the size the organisation policy allows, auto-pause after 60 minutes).
+The databases `etrm_dev` and `etrm_prod` on the shared server are created by the project (the organisation policy allows only Basic, S0 to S2 and `GP_S_Gen5_2`). `etrm_dev` was created by hand on the Basic tier. Terraform will manage the databases later.
 
 Databricks is **not** created by Terraform: the project uses an existing shared workspace, working only in its own folders and schemas and changing no workspace settings. Dev and prod are separate schemas and job names in that workspace. The workspace sits in a different Azure region from the lake, so a small cross-region data cost is accepted.
 
@@ -225,7 +225,7 @@ Dev and prod have the same structure. Differences: database name, storage accoun
 ## 8. CI/CD and infrastructure as code
 
 ### 8.1 Continuous integration (every pull request)
-Azure Pipelines run lint, unit tests, generator tests against the truth manifest, `terraform fmt` and `validate`, a `terraform plan` for dev, `databricks bundle validate`, a check that the SQL scripts run, and a secret scan. The first version (lint, tests, Terraform format and validate, and a guard against tracked state files) runs in both GitHub Actions and Azure Pipelines until the Azure pipeline is proven.
+Azure Pipelines run lint, unit tests, generator tests against the truth manifest, `terraform fmt` and `validate`, a `terraform plan` for dev, `databricks bundle validate`, a check that the SQL scripts run, and a secret scan. The first version (lint, tests, Terraform format and validate, and a guard against tracked state files) exists in both GitHub Actions and Azure Pipelines. GitHub Actions runs on every pull request. The Azure pipeline passed its first run and is started by hand while the project is in development.
 
 ### 8.2 Continuous delivery
 Merging to `main` starts the deploy pipeline. The Dev stage runs `terraform apply` from the saved plan, applies the control-table scripts, deploys the ADF definitions and runs `databricks bundle deploy -t dev`. The Prod stage runs the same steps after a manual approval on the Azure DevOps Environment. Terraform state is stored in a remote storage account, one state file per environment. Authentication uses a service connection (workload identity federation where the organisation allows it). See [ADR 0005](decisions/0005-azure-devops-for-ci-cd.md).
@@ -272,11 +272,11 @@ pipelines/       Azure Pipelines YAML (CI and deploy)
 | Item | Status |
 |---|---|
 | Generator and its tests (PySpark 3.5.3, Delta 3.2.1, 105 tests) | **Verified** |
-| Terraform: apply, linked services, loader against Azure SQL | **Verified** on the first design (own SQL server). The shared-server change is validated but **not yet planned or applied** |
+| Terraform: apply, linked services, loader against Azure SQL | **Verified**. The shared-server change was planned, reviewed and applied (6 destroyed, 1 changed). The loader filled `etrm_dev` and the row counts match the source |
 | Frankfurter FX API and NESO forecast API reachable without a key | **Verified** with a test call. Rate limits **not verified** |
-| Control table scripts (`adf/sql`) | **Written, not yet run** in Azure |
-| Databricks: Unity Catalog, permission to create jobs and pipelines, serverless or classic compute, access to the lake | **Open**. To be confirmed in the shared workspace |
-| Azure DevOps: organisation, free build capacity, service connection permission | **Open** |
+| Control table scripts (`adf/sql`) | **Verified** in `etrm_dev`. The test script passes |
+| Databricks: Unity Catalog, permission to create jobs and pipelines, serverless compute, access to the lake | **Confirmed** by the owner. Serverless compute is visible in the workspace. No Databricks code has been built yet |
+| Azure DevOps: organisation, build capacity, CI pipeline | **Verified**. The pipeline builds the GitHub repository and the three checks pass. The service connection to Azure is **Open** |
 | Permission to create databases on the shared SQL server | **Confirmed** by the owner |
 | Lakeflow Connect for the SQL source | **Open**. Needs change tracking, a gateway and workspace permission. Next phase |
 

@@ -1,15 +1,14 @@
 # Azure Pipelines CI. Runs the same checks as .github/workflows/ci.yml.
 # No Azure connection and no secrets are needed.
+#
+# It runs only when started by hand (Run pipeline), so that the shared Azure DevOps project
+# does not show a run for every change while the project is in development. GitHub Actions
+# runs the same checks on every pull request. To run on every pull request instead, replace
+# the two "none" lines with the branch lists for main.
 
-trigger:
-  branches:
-    include:
-      - main
+trigger: none
 
-pr:
-  branches:
-    include:
-      - main
+pr: none
 
 pool:
   vmImage: ubuntu-latest

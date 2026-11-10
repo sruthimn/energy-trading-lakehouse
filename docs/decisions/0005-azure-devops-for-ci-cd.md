@@ -14,7 +14,7 @@ The design used GitHub Actions for checks and left automated deployment to the n
 ## Decision
 Option 2 in the end state. Azure Pipelines run checks on every pull request and deploy Dev and then Prod. Deployment uses an Azure DevOps Environment with a manual approval before Prod.
 
-While the Azure DevOps organisation is being set up, the same checks run in both tools (`.github/workflows/ci.yml` and `pipelines/ci.yml`). This keeps pull requests protected from the start and shows both. Once the Azure pipeline is proven, the GitHub Actions checks are retired, so there is one CI tool.
+While the project is in development, the same checks exist in both tools (`.github/workflows/ci.yml` and `pipelines/ci.yml`). GitHub Actions runs on every pull request. The Azure pipeline runs only when started by hand, because the Azure DevOps project is shared and shows every run to its members. It passed its first run. Before the deployment pipelines are added, the Azure pipeline gets its triggers back and the GitHub Actions checks are retired, so there is one CI tool.
 
 Terraform runs in the pipelines. This needs three things:
 - **Remote state.** An agent has no persistent disk, so the state moves to a storage account, with one state file per environment. The storage account for state is created by hand once, outside Terraform.

@@ -61,7 +61,7 @@ The generator injects these deliberately. The truth manifest (`_truth/defects.js
 | Secrets and access | Passwords in code are a breach | Key Vault, managed identity. Nothing secret in the repository. A project login on the shared SQL server, not the shared administrator | Planned |
 | Row and column security | Not every user may see every row or column | Unity Catalog row filter by desk and a column mask on the counterparty limit | Planned |
 | Shared resources | The SQL server and Databricks workspace are shared with other teams | Own databases, folders and schemas only. No changes to server or workspace settings | Planned |
-| Cost control | Cloud bills grow quietly | Serverless SQL with auto-pause, serverless or auto-ending job compute, small data volumes, tags, a reviewed plan, destroy when finished | Planned |
+| Cost control | Cloud bills grow quietly | The smallest SQL tier the policy allows (Basic), serverless or auto-ending job compute, small data volumes, tags, a reviewed plan, destroy when finished | Planned |
 
 ---
 
@@ -71,10 +71,10 @@ The generator injects these deliberately. The truth manifest (`_truth/defects.js
 |---|---|---|
 | Bronze: append or merge | Decided: append with a lookback | ADR 0001. Revisit at large scale |
 | Size of the lookback | 2 days for trades | Configured as a pipeline parameter |
-| Shared Databricks workspace access to the lake | Open | To be confirmed before Bronze work starts |
-| Unity Catalog, jobs, pipelines and serverless in the shared workspace | Open | To be confirmed before any Databricks work |
+| Shared Databricks workspace access to the lake | Confirmed | An external location can be created |
+| Unity Catalog, jobs, pipelines and serverless in the shared workspace | Confirmed | Serverless compute is available |
 | dbt | Decided: not in the core | SQL materialized views build Gold. dbt may return as a job task (next phase) |
-| Azure DevOps organisation, build capacity and service connection | Open | To be confirmed before the deployment pipelines |
+| Azure DevOps organisation, build capacity and service connection | Partly confirmed | The organisation and CI pipeline work. The service connection is still open |
 | Lakeflow Connect for the SQL source | Open | Needs change tracking, a gateway and permission. Next phase |
 | Rate limits of the NESO forecast API | Open | Check before building the paginated pipeline |
 | Real-time track (Kafka) | Next phase | After the batch pipeline |

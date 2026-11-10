@@ -2,7 +2,7 @@
 
 Epics 0 and 1 keep the numbers of their GitHub issues (#1 to #19). Epics 2 onwards are not yet issues. Each item becomes an issue when it is scheduled.
 
-Size: S (under half a day), M (about a day), L (2 to 3 days). Status: Done, Planned (current phase) or Next phase. Items marked [Azure] need the Azure subscription and [DBX] need the shared Databricks workspace.
+Size: S (under half a day), M (about a day), L (2 to 3 days). Status: Done, In progress, Planned (current phase) or Next phase. Items marked [Azure] need the Azure subscription and [DBX] need the shared Databricks workspace.
 
 ## Epic 0: Foundations
 | # | Issue | Acceptance criteria | Size | Status |
@@ -24,7 +24,7 @@ Spikes 0.3 (dbt on DuckDB), 0.4 (Great Expectations on Spark) and 0.6 (native Az
 | 1.6 | Defect injection, truth manifest, control totals | D04 to D07, D14, D17 | M | Done |
 | 1.9 | Generator tests and sample dataset | Determinism and manifest tests pass, small sample dataset committed | M | Planned |
 | 1.11 | Load the source into Azure SQL | `load` command, safe to rerun, tests | M | Done |
-| 1.12 | File export (CSV and JSON) | Daily files written to the landing zone, deterministic, covered by tests | M | Planned |
+| 1.12 | File export (CSV and JSON) | `export` command writes a daily trade file (CSV) and counterparty change file (JSON Lines). Deterministic, written once, late rows in the file of the day they arrive, covered by tests. Copying the files to the lake is item 3.9 | M | Done |
 | 1.3 | Price file | D13, D15. FX rates are read from a public API | M | Next phase |
 | 1.7 | Schema drift injection | D10, D11 | S | Next phase |
 | 1.8 | Event stream generator | D09 | M | Next phase |
@@ -34,17 +34,17 @@ Spikes 0.3 (dbt on DuckDB), 0.4 (Great Expectations on Spark) and 0.6 (native Az
 | # | Issue | Acceptance criteria | Size | Status |
 |---|---|---|---|---|
 | 2.1 | Terraform foundation | ADLS Gen2 (five containers), Key Vault, Data Factory with linked services. First version applied | S | Done |
-| 2.2 | Use the shared SQL server | The project's own SQL server is removed. Linked service reads the shared server from variables. Plan shows only SQL resources destroyed | S | Planned |
+| 2.2 | Use the shared SQL server | The project's own SQL server is removed. Linked service reads the shared server from variables. Applied: only the old SQL resources were destroyed | S | Done |
 | 2.3 | Dev and prod environments | An `environment` variable, a variable file and a state per environment, names include the environment | M | Planned |
-| 2.4 | Dev and prod databases | `etrm_dev` and `etrm_prod` created on the shared server, serverless, with a project login each | M | Planned |
+| 2.4 | Dev and prod databases | `etrm_dev` exists on the shared server (created by hand, Basic tier, because the organisation policy allows only Basic, S0 to S2 and `GP_S_Gen5_2`). `etrm_prod`, creation in Terraform and a project login each are still to do | M | In progress |
 | 2.5 | Remote Terraform state | State in a storage account, one key per environment, local state migrated | S | Planned |
-| 2.6 | Load the source into each database | The loader fills `etrm_dev` and a rerun adds nothing | S | Planned |
+| 2.6 | Load the source into each database | The loader filled `etrm_dev` and the row counts match the source. A rerun check and `etrm_prod` are still to do | S | In progress |
 | 2.7 | `simulate-source-day` pipeline | Advances the source by one day on demand | M | Planned |
 
 ## Epic 3: ADF ingestion, metadata-driven **[Azure]**
 | # | Issue | Acceptance criteria | Size | Status |
 |---|---|---|---|---|
-| 3.1 | Control table, procedures and seed rows | `ctl.watermark`, update and failure procedures, one row per source. Scripts written in `adf/sql`, not yet run in Azure | S | Planned |
+| 3.1 | Control table, procedures and seed rows | `ctl.watermark`, update and failure procedures, one row per source. Scripts in `adf/sql` ran in `etrm_dev` and the test script passed (the misspelled source name fails as intended) | S | Done |
 | 3.2 | Metadata columns | Source path, format, target, enabled flag and parameters added to the control table | S | Planned |
 | 3.3 | Generic pipeline `pl_ingest_generic` | ForEach over enabled rows, branch by load type, parameters for source and environment | M | Planned |
 | 3.4 | Full load branch | Truncated source blocked by the row-count check | S | Planned |
@@ -97,12 +97,12 @@ Spikes 0.3 (dbt on DuckDB), 0.4 (Great Expectations on Spark) and 0.6 (native Az
 ## Epic 8: Azure DevOps CI/CD
 | # | Issue | Acceptance criteria | Size | Status |
 |---|---|---|---|---|
-| 8.1 | Organisation, project and service connection | Pipeline can authenticate to Azure and the repository | M | Planned |
+| 8.1 | Organisation, project and service connection | Pipeline can authenticate to Azure and the repository. The organisation and project exist and a pipeline built from GitHub runs. The service connection to Azure is still to do | M | In progress |
 | 8.2 | CI pipeline | Lint, unit tests, `terraform fmt` and `validate`, `bundle validate`, secret scan on every pull request | M | Planned |
 | 8.3 | Terraform plan in CI | Plan for dev shown on the pull request | M | Planned |
 | 8.4 | Deploy pipeline | Dev stage applies the saved plan, runs SQL scripts, deploys ADF and the bundle | L | Planned |
 | 8.5 | Prod stage with approval | Manual approval on the Azure DevOps Environment, then the same steps | M | Planned |
-| 8.7 | Checks in both tools | `.github/workflows/ci.yml` and `pipelines/ci.yml` run lint, tests, Terraform format and validate, and a guard against tracked state files. Written, not yet run | S | Planned |
+| 8.7 | Checks in both tools | `.github/workflows/ci.yml` and `pipelines/ci.yml` run lint, tests, Terraform format and validate, and a guard against tracked state files. Both pass. GitHub Actions runs on every pull request and the Azure pipeline is started by hand | S | Done |
 | 8.6 | Retire the GitHub Actions checks | One CI tool once the Azure pipeline is proven, README updated | S | Planned |
 
 ## Epic 9: Security and governance **[DBX]**

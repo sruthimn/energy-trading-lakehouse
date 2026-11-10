@@ -4,6 +4,8 @@ python -m lakehouse.generator.cli init    --dir data/source --trades-per-day 200
 python -m lakehouse.generator.cli advance --dir data/source --days 5
 python -m lakehouse.generator.cli status  --dir data/source
 python -m lakehouse.generator.cli load    --dir data/source   (copies the data into Azure SQL)
+python -m lakehouse.generator.cli export  --dir data/source --out data/landing
+    (writes the daily CSV and JSON files)
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import argparse
 import sqlite3
 from datetime import date
 
+from lakehouse.generator.files import export_files
 from lakehouse.generator.reference import DEFAULT_SEED
 from lakehouse.generator.source_db import (
     DEFAULT_START_DATE,
@@ -42,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     load = sub.add_parser("load", help="copy the source database into Azure SQL")
     load.add_argument("--dir", required=True)
+
+    export = sub.add_parser("export", help="write the daily CSV and JSON files")
+    export.add_argument("--dir", required=True)
+    export.add_argument("--out", required=True, help="folder for the files")
+    export.add_argument("--force", action="store_true", help="rewrite files that already exist")
     return parser
 
 
@@ -73,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     system = SourceSystem(args.dir)
     if args.command == "load":
         return load_to_azure_sql(system)
+    if args.command == "export":
+        written = export_files(system, args.out, force=args.force)
+        for path in written:
+            print(path)
+        print(f"{len(written)} files written to {args.out}")
+        return 0
     if args.command == "advance":
         for result in system.advance(args.days):
             print(
