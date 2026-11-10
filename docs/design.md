@@ -225,7 +225,7 @@ Dev and prod have the same structure. Differences: database name, storage accoun
 ## 8. CI/CD and infrastructure as code
 
 ### 8.1 Continuous integration (every pull request)
-Azure Pipelines run lint, unit tests, generator tests against the truth manifest, `terraform fmt` and `validate`, a `terraform plan` for dev, `databricks bundle validate`, a check that the SQL scripts run, and a secret scan. The first version (lint, tests, Terraform format and validate, and a guard against tracked state files) runs in both GitHub Actions and Azure Pipelines until the Azure pipeline is proven.
+Azure Pipelines run lint, unit tests, generator tests against the truth manifest, `terraform fmt` and `validate`, a `terraform plan` for dev, `databricks bundle validate`, a check that the SQL scripts run, and a secret scan. The first version (lint, tests, Terraform format and validate, and a guard against tracked state files) exists in both GitHub Actions and Azure Pipelines. GitHub Actions runs on every pull request. The Azure pipeline passed its first run and is started by hand while the project is in development.
 
 ### 8.2 Continuous delivery
 Merging to `main` starts the deploy pipeline. The Dev stage runs `terraform apply` from the saved plan, applies the control-table scripts, deploys the ADF definitions and runs `databricks bundle deploy -t dev`. The Prod stage runs the same steps after a manual approval on the Azure DevOps Environment. Terraform state is stored in a remote storage account, one state file per environment. Authentication uses a service connection (workload identity federation where the organisation allows it). See [ADR 0005](decisions/0005-azure-devops-for-ci-cd.md).

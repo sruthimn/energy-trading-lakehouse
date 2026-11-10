@@ -102,7 +102,7 @@ Spikes 0.3 (dbt on DuckDB), 0.4 (Great Expectations on Spark) and 0.6 (native Az
 | 8.3 | Terraform plan in CI | Plan for dev shown on the pull request | M | Planned |
 | 8.4 | Deploy pipeline | Dev stage applies the saved plan, runs SQL scripts, deploys ADF and the bundle | L | Planned |
 | 8.5 | Prod stage with approval | Manual approval on the Azure DevOps Environment, then the same steps | M | Planned |
-| 8.7 | Checks in both tools | `.github/workflows/ci.yml` and `pipelines/ci.yml` run lint, tests, Terraform format and validate, and a guard against tracked state files. Both pass | S | Done |
+| 8.7 | Checks in both tools | `.github/workflows/ci.yml` and `pipelines/ci.yml` run lint, tests, Terraform format and validate, and a guard against tracked state files. Both pass. GitHub Actions runs on every pull request and the Azure pipeline is started by hand | S | Done |
 | 8.6 | Retire the GitHub Actions checks | One CI tool once the Azure pipeline is proven, README updated | S | Planned |
 
 ## Epic 9: Security and governance **[DBX]**
