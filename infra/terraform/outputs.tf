@@ -15,16 +15,6 @@ output "key_vault_name" {
   value       = azurerm_key_vault.kv.name
 }
 
-output "sql_server_fqdn" {
-  description = "The address of the simulated trading system."
-  value       = azurerm_mssql_server.sql.fully_qualified_domain_name
-}
-
-output "sql_database_name" {
-  description = "The database inside it."
-  value       = azurerm_mssql_database.etrm.name
-}
-
 output "data_factory_name" {
   description = "The Data Factory."
   value       = azurerm_data_factory.adf.name

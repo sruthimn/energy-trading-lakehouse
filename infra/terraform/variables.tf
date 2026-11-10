@@ -1,35 +1,55 @@
 variable "subscription_id" {
-  description = "The Azure subscription to use. Put it in terraform.tfvars, which is ignored by git. Never commit it."
+  description = "The Azure subscription ID. Set it in terraform.tfvars, which git ignores."
   type        = string
 }
 
 variable "resource_group_name" {
-  description = "An EXISTING resource group to create everything in. Terraform never creates or deletes it."
+  description = "An existing resource group to create everything in. Terraform does not create or delete it."
   type        = string
 }
 
 variable "prefix" {
-  description = "A short name used at the start of every resource, so these resources are easy to tell apart from others in the group."
+  description = "Short name used in every resource name, to tell them apart from other resources in the group."
   type        = string
   default     = "energytrading"
 
   validation {
-    # The limit is 15 characters because Key Vault names allow 24: "kv-", the prefix, "-" and a 5 character suffix.
+    # Key Vault names allow 24 characters: "kv-", the prefix, "-" and the suffix.
     condition     = can(regex("^[a-z][a-z0-9]{2,14}$", var.prefix))
     error_message = "Use 3 to 15 lowercase letters or digits, starting with a letter."
   }
 }
 
-variable "sql_admin_login" {
-  description = "The administrator name of the Azure SQL server. The password is generated and kept in Key Vault."
+variable "suffix" {
+  description = "Short name added to the end of every resource name. Change it if a name is already taken in Azure."
   type        = string
-  default     = "energy_admin"
+  default     = "sr"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{1,5}$", var.suffix))
+    error_message = "Use 1 to 5 lowercase letters or digits."
+  }
 }
 
-variable "allowed_client_ip" {
-  description = "The client public IP address, so Azure SQL can be reached from that machine. Leave empty to skip."
+variable "sql_server_fqdn" {
+  description = "Address of the shared Azure SQL server. Set it in terraform.tfvars, which git ignores."
   type        = string
-  default     = ""
+}
+
+variable "sql_database_name" {
+  description = "Database on the shared server that holds the source and control tables."
+  type        = string
+}
+
+variable "sql_admin_login" {
+  description = "Login used on the shared SQL server."
+  type        = string
+}
+
+variable "sql_password_secret_name" {
+  description = "Name of the Key Vault secret that holds that login's password. Add the secret by hand."
+  type        = string
+  default     = "sql-admin-password"
 }
 
 variable "tags" {
