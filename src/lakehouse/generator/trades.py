@@ -1,18 +1,8 @@
-"""Trades: the busiest table in the trading system.
+"""Trade simulator: creates trades day by day, then amends or cancels some of them later.
 
-How a trading system really behaves, and what this module copies
-----------------------------------------------------------------
-* A trader does a deal. The system writes one row: trade_id, version 1.
-* A later day, the deal is amended (a volume or price changes). The system does
-  NOT overwrite the row. It writes a NEW row: same trade_id, version 2.
-* A deal can also be cancelled. That is one more row, with status CANCELLED.
-
-So the table holds every version of every trade. The pipeline's job is to work
-out which version is the latest. That is defects D01 (amendments) and D02
-(cancellations) in the design.
-
-Timestamps are written in UK local time with no time zone, as many trading
-systems do. Converting them to UTC is the pipeline's job.
+An amendment or a cancellation is a new row with the next trade_version, so the table holds
+every version of every trade (defects D01 and D02). Times are UK local time with no time zone,
+and converting them to UTC is left to the pipeline.
 """
 
 from __future__ import annotations
@@ -25,11 +15,11 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from lakehouse.generator.reference import ReferenceData
+from lakehouse.generator.rng_state import decode_rng, encode_rng
 
 LONDON = ZoneInfo("Europe/London")
 
-# Conversion factors. The trading system knows the real physics. The Silver
-# layer has to use the same factors to put every volume in a standard unit.
+# Unit conversion factors. Tests use the same ones to check the Silver layer.
 THERM_PER_MWH = 34.1214
 BBL_PER_M3 = 6.28981
 
@@ -63,7 +53,7 @@ PROFILES = {
     "UKA_EMS": Profile("EMS", (5_000, 200_000), (30, 60), 0),
 }
 
-# How the simulation behaves. These are the knobs of the source team.
+# Simulation settings.
 AMENDMENT_RATE = 0.08  # share of trades amended at least once (defect D01)
 MAX_AMENDMENTS = 4  # a trade can be amended up to this many times
 CANCELLATION_RATE = 0.02  # share of trades cancelled (defect D02)
@@ -91,7 +81,7 @@ TRADE_COLUMNS = [
 
 
 def is_business_day(day: date) -> bool:
-    """Monday to Friday. (UK bank holidays are ignored to keep it simple.)"""
+    """Monday to Friday. UK bank holidays are ignored."""
     return day.weekday() < 5
 
 
@@ -125,12 +115,9 @@ def business_days(start: date, end: date) -> list[date]:
 
 
 def elapsed_hours(start: datetime, end: datetime) -> float:
-    """The real number of hours between two UK local times.
+    """Real hours between two UK local times, counting clock changes (defect D07).
 
-    On the day the clocks go forward a day has 23 hours, and on the day they go
-    back it has 25. Subtracting the clock times directly would be wrong by one
-    hour for any period that contains a clock change (defect D07). The correct
-    way is to convert both times to UTC first, then subtract.
+    A day has 23 or 25 hours when the clocks change, so both times are converted to UTC first.
     """
     start_utc = start.replace(tzinfo=LONDON).astimezone(UTC)
     end_utc = end.replace(tzinfo=LONDON).astimezone(UTC)
@@ -144,12 +131,10 @@ def to_standard_volume(
     delivery_start: datetime,
     delivery_end: datetime,
 ) -> float:
-    """What the volume is worth in the standard unit (the truth the pipeline must match).
+    """The volume in the standard unit, which the pipeline result must match.
 
-    * Power in MW is a rate, so it is multiplied by the real hours of the delivery
-      period to give megawatt-hours. Real hours means clock changes are counted.
-    * Gas in MWh is converted to therms.
-    * Crude in cubic metres is converted to barrels.
+    Power in MW is multiplied by the real hours of the period to give MWh. Gas in MWh becomes
+    therms, and crude in cubic metres becomes barrels.
     """
     if commodity_group == "POWER":
         if unit == "MW":
@@ -163,16 +148,6 @@ def to_standard_volume(
 
 
 _DATETIME_FIELDS = ("delivery_start", "delivery_end", "last_modified")
-
-
-def _encode_rng(state: tuple) -> list:
-    """Random generator state as plain lists, so it can be saved as JSON."""
-    version, internal, gauss = state
-    return [version, list(internal), gauss]
-
-
-def _decode_rng(data: list) -> tuple:
-    return (data[0], tuple(data[1]), data[2])
 
 
 def _encode_row(row: dict) -> dict:
@@ -209,14 +184,7 @@ class SimulationStats:
 class TradeSimulator:
     """Creates trades day by day, and amends or cancels some of them later.
 
-    Use it like this:
-
-        sim = TradeSimulator(reference, seed=42, trades_per_day=1000)
-        for day in business_days(date(2026, 3, 16), date(2026, 4, 10)):
-            todays_rows = sim.simulate_day(day)
-
-    Days must be simulated in order, because an amendment on day 5 depends on
-    the trade that was created on day 2.
+    Days must be simulated in order, because an amendment depends on an earlier trade.
     """
 
     reference: ReferenceData
@@ -263,7 +231,6 @@ class TradeSimulator:
         self._counterparties = self.reference.counterparties["counterparty_id"].tolist()
         self._traders = [f"TR-{number:04d}" for number in range(5001, 5031)]
 
-    # ------------------------------------------------------------------
     def has_pending_changes(self, trade_id: str) -> bool:
         """True if this trade will still be amended or cancelled on a later day."""
         return trade_id in self._latest
@@ -277,14 +244,13 @@ class TradeSimulator:
         if counterparty_id not in self._counterparties:
             self._counterparties.append(counterparty_id)
 
-    # ------------------------------------------------------------------
     def get_state(self) -> dict:
         """Everything needed to carry on tomorrow, as plain data that can be saved."""
         return {
             "counter": self._counter,
             "last_day": self._last_day.isoformat() if self._last_day else None,
-            "rng": _encode_rng(self._rng.getstate()),
-            "late_rng": _encode_rng(self._late_rng.getstate()),
+            "rng": encode_rng(self._rng.getstate()),
+            "late_rng": encode_rng(self._late_rng.getstate()),
             "schedule": {
                 day.isoformat(): [list(item) for item in items]
                 for day, items in self._schedule.items()
@@ -298,8 +264,8 @@ class TradeSimulator:
         """Carry on from a saved state, exactly where it left off."""
         self._counter = state["counter"]
         self._last_day = date.fromisoformat(state["last_day"]) if state["last_day"] else None
-        self._rng.setstate(_decode_rng(state["rng"]))
-        self._late_rng.setstate(_decode_rng(state["late_rng"]))
+        self._rng.setstate(decode_rng(state["rng"]))
+        self._late_rng.setstate(decode_rng(state["late_rng"]))
         self._schedule = {
             date.fromisoformat(day): [tuple(item) for item in items]
             for day, items in state["schedule"].items()
@@ -309,7 +275,6 @@ class TradeSimulator:
         if "counterparties" in state:
             self._counterparties = list(state["counterparties"])
 
-    # ------------------------------------------------------------------
     def simulate_day(self, day: date) -> pd.DataFrame:
         """All trade rows written on this business day (new, amended, cancelled)."""
         if not is_business_day(day):
@@ -330,7 +295,6 @@ class TradeSimulator:
         self.stats.rows += len(rows)
         return pd.DataFrame(rows, columns=TRADE_COLUMNS)
 
-    # ------------------------------------------------------------------
     def _new_trade(self, day: date) -> dict:
         rng = self._rng
         self._counter += 1
@@ -372,12 +336,10 @@ class TradeSimulator:
         return row
 
     def _maybe_make_late(self, day: date, row: dict) -> None:
-        """A few new trades arrive in the database a day late (defect D03).
+        """A few new trades reach the database a day late (defect D03).
 
-        The deal was done yesterday morning, and its last_modified says so, but
-        the row only reaches the database today. A load that remembers "the
-        newest last_modified I have seen" has already moved past that time, so it
-        never picks the row up. The pipeline must be built to catch it.
+        Their last_modified is yesterday morning, so a load that tracks the newest
+        last_modified has already moved past them and never reads them.
         """
         if not self._can_be_late or self._late_rng.random() >= self.late_rate:
             return
@@ -438,7 +400,6 @@ class TradeSimulator:
             self._latest[trade_id] = new
         return rows
 
-    # ------------------------------------------------------------------
     def _delivery_period(self, day: date, profile: Profile) -> tuple[datetime, datetime]:
         """A delivery period starting 1 to 12 months ahead, lasting 1 or 3 months."""
         months_ahead = self._rng.randint(1, 12)

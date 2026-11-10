@@ -34,7 +34,7 @@ def run(reference, trades_per_day=300, seed=42, start=START, end=END):
     return pd.concat(frames, ignore_index=True), sim
 
 
-# --- business days -------------------------------------------------------
+# business days
 
 
 def test_business_days_skip_weekends():
@@ -54,7 +54,7 @@ def test_previous_business_day_skips_the_weekend():
     assert previous_business_day(date(2026, 3, 18)) == date(2026, 3, 17)
 
 
-# --- the shape of the data ----------------------------------------------
+# the shape of the data
 
 
 def test_columns_are_as_documented(reference):
@@ -123,7 +123,7 @@ def test_volumes_and_prices_are_positive(reference):
     assert (rows["price"] > 0).all()
 
 
-# --- amendments and cancellations (defects D01 and D02) ------------------
+# amendments and cancellations (defects D01 and D02)
 
 
 def test_every_trade_starts_at_version_one(reference):
@@ -183,7 +183,7 @@ def test_amended_rows_keep_the_same_trade_details(reference):
     assert (rows.groupby("trade_id")[keys].nunique() == 1).all().all()
 
 
-# --- simulator rules -----------------------------------------------------
+# simulator rules
 
 
 def test_days_must_be_simulated_in_order(reference):
@@ -199,7 +199,7 @@ def test_weekends_are_rejected(reference):
         sim.simulate_day(date(2026, 3, 21))  # a Saturday
 
 
-# --- the truth about volumes ---------------------------------------------
+# the truth about volumes
 
 
 def test_power_in_mw_becomes_mwh_over_the_delivery_period():

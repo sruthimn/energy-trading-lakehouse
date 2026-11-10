@@ -1,17 +1,9 @@
-"""Deliberate data problems, injected into the source system.
+"""Deliberate data problems injected into the source system.
 
-Real source systems are not clean. This module spoils a few rows on purpose, and
-records exactly which ones, so tests can prove the pipeline finds every one.
+D04 a mandatory field is empty, D05 the delivery period ends before it starts, D14 a trade points
+to a counterparty that does not exist, D17 trade rows are deleted from the source.
 
-Defects injected here
----------------------
-D04  a mandatory field is empty (volume, unit, book, commodity or delivery start)
-D05  the delivery period ends before it starts
-D14  a trade points to a counterparty that does not exist (an orphan)
-D17  a trade row is physically deleted from the source, which a watermark cannot see
-
-Only the table in the database is spoiled. The simulator's own picture of the
-trade stays clean, so a later amendment of the same trade is a good row.
+Only the table in the database is changed, so a later amendment of the same trade is clean.
 """
 
 from __future__ import annotations
@@ -22,7 +14,9 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-# The source system is lenient about these columns. A real system often is.
+from lakehouse.generator.rng_state import decode_rng, encode_rng
+
+# Columns the source allows to be empty.
 NULLABLE_COLUMNS = ["book_id", "commodity_code", "delivery_start", "volume", "unit"]
 
 DEFAULT_NULL_RATE = 0.0005  # share of rows with an empty mandatory field (D04)
@@ -65,20 +59,16 @@ class DefectInjector:
         self.hard_delete_count = hard_delete_count
         self.hard_delete_done = False
 
-    # ------------------------------------------------------------------
     def get_state(self) -> dict:
-        version, internal, gauss = self._rng.getstate()
         return {
-            "rng": [version, list(internal), gauss],
+            "rng": encode_rng(self._rng.getstate()),
             "hard_delete_done": self.hard_delete_done,
         }
 
     def set_state(self, state: dict) -> None:
-        version, internal, gauss = state["rng"]
-        self._rng.setstate((version, tuple(internal), gauss))
+        self._rng.setstate(decode_rng(state["rng"]))
         self.hard_delete_done = state["hard_delete_done"]
 
-    # ------------------------------------------------------------------
     def spoil(self, frame: pd.DataFrame) -> tuple[pd.DataFrame, list[Injection]]:
         """Return a copy of the day's trades with a few rows spoiled, and the list of them."""
         frame = frame.copy()
@@ -109,7 +99,6 @@ class DefectInjector:
                 injections.append(Injection("ORPHAN_COUNTERPARTY", trade_id, version, fake))
         return frame, injections
 
-    # ------------------------------------------------------------------
     def is_hard_delete_day(self, day: date) -> bool:
         return (
             self.hard_delete_count > 0 and day == self.hard_delete_day and not self.hard_delete_done

@@ -1,13 +1,6 @@
-"""Reference data: the small, slow-changing tables that describe the business.
+"""Reference data: commodities, books and counterparties.
 
-Three tables are created:
-
-* commodities    what is traded (power, gas, crude, carbon) and its standard unit
-* books          the portfolios that trades are booked into, owned by trading desks
-* counterparties the companies we trade with, each with a credit rating
-
-Everything is fictional. Any resemblance to a real company is a coincidence.
-The same seed always gives exactly the same data, so tests are reliable.
+Everything is fictional. The same seed always gives the same data.
 """
 
 from __future__ import annotations
@@ -19,12 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
-# ---------------------------------------------------------------------------
 # Commodities
-# ---------------------------------------------------------------------------
-# standard_unit is the unit every volume is converted to in the Silver layer.
-# native_units are the units the trading system may send us (this is why
-# the Silver layer needs a unit conversion step).
+# standard_unit is what the Silver layer converts to. native_units are the units a trade can use.
 COMMODITIES = [
     # code, name, group, standard_unit, native_units, quote_currency
     ("GB_PWR_BL", "GB Power Baseload", "POWER", "MWh", "MW|MWh", "GBP"),
@@ -36,9 +25,7 @@ COMMODITIES = [
     ("UKA_EMS", "UKA Emissions", "EMISSIONS", "tCO2e", "tCO2e", "GBP"),
 ]
 
-# ---------------------------------------------------------------------------
 # Books (portfolios owned by trading desks)
-# ---------------------------------------------------------------------------
 # desk_code, book id prefix, how many books, trader group
 DESKS = [
     ("UKPWR", "GB Power", 3, "TG-POWER"),
@@ -48,9 +35,7 @@ DESKS = [
     ("CARB", "Carbon", 1, "TG-CARBON"),
 ]
 
-# ---------------------------------------------------------------------------
 # Counterparties
-# ---------------------------------------------------------------------------
 # Invented words, so no real company is named.
 NAME_STARTS = [
     "Aldermere",
@@ -94,8 +79,7 @@ NAME_STARTS = [
     "Nettlebrook",
     "Orrwell",
 ]
-# Spare names, used only when a new counterparty is onboarded later in the simulation.
-# They are kept apart so the first 40 counterparties never change.
+# Names for counterparties onboarded later, kept apart so the first 40 never change.
 EXTRA_NAME_STARTS = [
     "Penhallow",
     "Rookwood",
@@ -189,9 +173,7 @@ def generate_books() -> pd.DataFrame:
 def generate_counterparties(seed: int = DEFAULT_SEED, count: int = DEFAULT_COUNTERPARTIES):
     """Fictional companies with a country, a credit rating and a credit limit.
 
-    The ids run CP-00001, CP-00002, ... and never change. Later steps of the
-    simulation change ratings over time (a downgrade) so that the pipeline can
-    keep the history.
+    The ids run CP-00001, CP-00002 and so on, and never change.
     """
     if count > len(NAME_STARTS):
         raise ValueError(f"At most {len(NAME_STARTS)} counterparties are supported")
