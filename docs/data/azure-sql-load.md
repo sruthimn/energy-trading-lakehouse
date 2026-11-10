@@ -34,4 +34,4 @@ The command creates the tables if they are missing, then prints what changed:
 
 It is safe to run again. After an `advance`, run `load` again to bring over the new day. Running it twice in a row adds nothing.
 
-The paused serverless database can take up to a minute to start. The command waits and retries.
+The Basic tier has only 5 DTUs, so the first load can take several minutes. The command waits and retries if the database is busy.

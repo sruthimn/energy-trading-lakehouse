@@ -19,4 +19,4 @@ Databricks uses an **existing shared workspace** and is not created by Terraform
 - The Python watermark helper that was started on a branch is not needed and is dropped.
 - Azure resources must exist before ingestion can be tested, so the Terraform foundation is the first deliverable.
 - Pipeline definitions are exported to the repository as JSON so they are reviewed like code.
-- Cost is controlled with serverless SQL (auto-pause) and small data volumes.
+- Cost is controlled with the smallest SQL tier the policy allows and small data volumes.
