@@ -51,12 +51,17 @@ The generator injects these deliberately. The truth manifest (`_truth/defects.js
 | Time zones | Local times and clock changes | Convert to UTC early and count real hours | Planned |
 | Units | The same quantity in several units | One standard unit per commodity with fixed factors, applied in Silver | Planned |
 | Reconciliation | Confirming the numbers are right | Compare Gold totals to the control totals every day. Block publication if they differ | Planned |
-| Orchestration | Dependencies, retries, deadlines | ADF triggers first. Airflow on AKS with retries, SLAs and a gate for quarantined sources in the next phase | Planned |
-| Infrastructure as code | Portal changes are not repeatable | Terraform in Git, a reviewed plan before every apply, destroy when finished | Planned |
-| CI/CD | Untested code reaches production | Tests and checks on every pull request. Automated deployment in the next phase | Planned |
-| Secrets and access | Passwords in code are a breach | Key Vault, managed identity. Nothing secret in the repository | Planned |
-| Shared workspace | The Databricks workspace is shared with other teams | Own folder and schema only. No changes to workspace settings | Planned |
-| Cost control | Cloud bills grow quietly | Serverless SQL with auto-pause, small data volumes, a reviewed plan, destroy when finished | Planned |
+| Many sources, one pipeline | A pipeline per source does not scale | A control table drives one parameterised ADF pipeline. A new source is a new row | Planned |
+| Files arriving at any time | A schedule reads files late or twice | Auto Loader tracks which files are read. A file-arrival trigger starts the job | Planned |
+| Orchestration | Dependencies, retries, deadlines | ADF moves data in. A Lakeflow Job runs Bronze, Silver, Gold and the checks with retries and alerts. Airflow is not used | Planned |
+| Environments | Dev changes must not reach prod untested | Dev and prod databases, storage and schemas. The same code deploys to both with different parameters and an approval before prod | Planned |
+| Deployment of Databricks code | Notebooks edited by hand drift | A Databricks Asset Bundle with a wheel built from `src`, validated in CI | Planned |
+| Infrastructure as code | Portal changes are not repeatable | Terraform in Git with remote state, a reviewed plan before every apply, destroy when finished | Planned |
+| CI/CD | Untested code reaches production | Azure DevOps Pipelines check every pull request and deploy Dev then Prod | Planned |
+| Secrets and access | Passwords in code are a breach | Key Vault, managed identity. Nothing secret in the repository. A project login on the shared SQL server, not the shared administrator | Planned |
+| Row and column security | Not every user may see every row or column | Unity Catalog row filter by desk and a column mask on the counterparty limit | Planned |
+| Shared resources | The SQL server and Databricks workspace are shared with other teams | Own databases, folders and schemas only. No changes to server or workspace settings | Planned |
+| Cost control | Cloud bills grow quietly | Serverless SQL with auto-pause, serverless or auto-ending job compute, small data volumes, tags, a reviewed plan, destroy when finished | Planned |
 
 ---
 
@@ -67,6 +72,9 @@ The generator injects these deliberately. The truth manifest (`_truth/defects.js
 | Bronze: append or merge | Decided: append with a lookback | ADR 0001. Revisit at large scale |
 | Size of the lookback | 2 days for trades | Configured as a pipeline parameter |
 | Shared Databricks workspace access to the lake | Open | To be confirmed before Bronze work starts |
-| dbt against the shared workspace (SQL warehouse or cluster) | Open | To be confirmed before Gold work starts |
+| Unity Catalog, jobs, pipelines and serverless in the shared workspace | Open | To be confirmed before any Databricks work |
+| dbt | Decided: not in the core | SQL materialized views build Gold. dbt may return as a job task (next phase) |
+| Azure DevOps organisation, build capacity and service connection | Open | To be confirmed before the deployment pipelines |
+| Lakeflow Connect for the SQL source | Open | Needs change tracking, a gateway and permission. Next phase |
 | Rate limits of the NESO forecast API | Open | Check before building the paginated pipeline |
 | Real-time track (Kafka) | Next phase | After the batch pipeline |
