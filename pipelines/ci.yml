@@ -1,0 +1,59 @@
+# Azure Pipelines CI. Runs the same checks as .github/workflows/ci.yml.
+# No Azure connection and no secrets are needed.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  terraformVersion: "1.9.8"
+
+stages:
+  - stage: Checks
+    jobs:
+      - job: Python
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.11"
+          - script: |
+              export JAVA_HOME="$JAVA_HOME_17_X64"
+              export PATH="$JAVA_HOME/bin:$PATH"
+              java -version
+              python -m pip install -e ".[dev]"
+              ruff check .
+              python -m pytest
+            displayName: Install, lint and test
+
+      - job: Terraform
+        steps:
+          - script: |
+              curl -sSLo terraform.zip "https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip"
+              unzip -o terraform.zip -d "$HOME/tf"
+              echo "##vso[task.prependpath]$HOME/tf"
+            displayName: Install Terraform
+          - script: |
+              terraform version
+              terraform fmt -check -recursive
+              terraform init -backend=false
+              terraform validate
+            workingDirectory: infra/terraform
+            displayName: Format and validate
+
+      - job: Guard
+        steps:
+          - script: |
+              if git ls-files | grep -E '\.tfstate|(^|/)terraform\.tfvars$|\.tfplan$'; then
+                echo "A state, variable or plan file is tracked. Remove it."
+                exit 1
+              fi
+            displayName: No state or variable files in git
