@@ -24,7 +24,7 @@ Spikes 0.3 (dbt on DuckDB), 0.4 (Great Expectations on Spark) and 0.6 (native Az
 | 1.6 | Defect injection, truth manifest, control totals | D04 to D07, D14, D17 | M | Done |
 | 1.9 | Generator tests and sample dataset | Determinism and manifest tests pass, small sample dataset committed | M | Planned |
 | 1.11 | Load the source into Azure SQL | `load` command, safe to rerun, tests | M | Done |
-| 1.12 | File export (CSV and JSON) | Daily files written to the landing zone, deterministic, covered by tests | M | Planned |
+| 1.12 | File export (CSV and JSON) | `export` command writes a daily trade file (CSV) and counterparty change file (JSON Lines). Deterministic, written once, late rows in the file of the day they arrive, covered by tests. Copying the files to the lake is item 3.9 | M | Done |
 | 1.3 | Price file | D13, D15. FX rates are read from a public API | M | Next phase |
 | 1.7 | Schema drift injection | D10, D11 | S | Next phase |
 | 1.8 | Event stream generator | D09 | M | Next phase |
