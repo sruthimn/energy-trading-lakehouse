@@ -1,16 +1,11 @@
-"""The truth: the right answers that tests compare the pipeline against.
+"""The correct answers that tests compare the pipeline against.
 
-Two things are produced here:
+It writes the control totals (one small file per business day, like a finance extract) and the
+truth manifest (the injected defects and the expected results).
 
-* control totals, one small file per business day, like the end-of-day extract
-  a real trading system sends to finance, and
-* the truth manifest, a JSON file listing exactly which problems were injected
-  and what the correct results are.
-
-The rule used for "correct" (the same steps the Silver layer must follow)
--------------------------------------------------------------------------
-1. A row is INVALID if a mandatory field is empty (D04) or the delivery period
-   ends before it starts (D05). Invalid rows go to the dead letter queue.
+Rules for a correct result, the same steps the Silver layer follows:
+1. A row is invalid if a mandatory field is empty (D04) or the delivery period ends before it
+   starts (D05).
 2. Among the valid rows, keep the highest version of each trade.
 3. A trade whose latest valid version is CANCELLED is not active.
 4. Volumes are converted to the standard unit, counting clock changes (D06, D07).
@@ -38,9 +33,7 @@ TRADE_TIME_COLUMNS = ["delivery_start", "delivery_end", "last_modified"]
 CLOCK_CHANGE_YEARS = (2026, 2027)
 
 
-# ----------------------------------------------------------------------
 # Reading and judging trade rows
-# ----------------------------------------------------------------------
 def load_trades(con: sqlite3.Connection, table: str = "trades") -> pd.DataFrame:
     """Read a trades table and turn the time columns into real timestamps."""
     frame = pd.read_sql(f"SELECT * FROM {table}", con)
@@ -107,9 +100,7 @@ def write_control_totals(directory: Path, business_date: date, totals: pd.DataFr
     return path
 
 
-# ----------------------------------------------------------------------
 # Clock changes (defect D07)
-# ----------------------------------------------------------------------
 def last_sunday(year: int, month: int) -> date:
     """The UK clocks change on the last Sunday of March and of October."""
     day = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
@@ -135,9 +126,7 @@ def clock_changes() -> dict[str, int]:
     return result
 
 
-# ----------------------------------------------------------------------
 # The truth manifest
-# ----------------------------------------------------------------------
 def _summary(frame: pd.DataFrame, group_of: dict[str, str]) -> dict:
     """The expected results for a set of trade rows."""
     invalid = invalid_mask(frame)

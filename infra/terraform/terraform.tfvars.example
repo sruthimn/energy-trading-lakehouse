@@ -4,6 +4,7 @@
 subscription_id     = "00000000-0000-0000-0000-000000000000"
 resource_group_name = "your-existing-resource-group"
 
-# Optional. The client public IP address, to reach Azure SQL
-# from that machine. Leave it empty if it is not needed yet.
-allowed_client_ip = ""
+# The shared SQL server. Not created by Terraform.
+sql_server_fqdn   = "your-shared-server.database.windows.net"
+sql_database_name = "your-database"
+sql_admin_login   = "your-sql-login"

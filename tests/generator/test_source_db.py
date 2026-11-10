@@ -24,7 +24,7 @@ def all_trade_rows(system):
     return query(system, "SELECT * FROM trades ORDER BY trade_id, trade_version")
 
 
-# --- creating it -----------------------------------------------------------
+# creating it
 
 
 def test_create_loads_the_reference_tables(tmp_path):
@@ -56,7 +56,7 @@ def test_opening_a_missing_system_fails_clearly(tmp_path):
         SourceSystem(tmp_path / "nothing-here")
 
 
-# --- advancing one day at a time -------------------------------------------
+# advancing one day at a time
 
 
 def test_advance_adds_one_days_trades_and_moves_to_the_next_day(tmp_path):
@@ -94,7 +94,7 @@ def test_every_trade_row_has_all_values(tmp_path):
     assert nulls[0][0] == 0
 
 
-# --- carrying on later (the important part) -----------------------------------
+# carrying on later (the important part)
 
 
 def test_closing_and_reopening_gives_the_same_result_as_running_straight_through(tmp_path):
@@ -127,7 +127,7 @@ def test_amendments_arrive_on_later_days_as_new_versions(tmp_path):
     assert amended > 0
 
 
-# --- late rows (defect D03) ------------------------------------------------------
+# late rows (defect D03)
 
 
 def test_the_first_day_has_no_late_rows(tmp_path):
@@ -160,7 +160,7 @@ def test_a_late_row_is_older_than_rows_already_in_the_database(tmp_path):
 
 
 def test_a_watermark_on_last_modified_misses_the_late_rows(tmp_path):
-    """The lesson of defect D03, shown in the simplest possible way."""
+    """Defect D03 in its simplest form."""
     system = make(tmp_path, trades_per_day=2000, late_rate=0.01)
     system.advance()
     watermark = query(system, "SELECT MAX(last_modified) FROM trades")[0][0]
@@ -173,7 +173,7 @@ def test_a_watermark_on_last_modified_misses_the_late_rows(tmp_path):
     assert todays_rows - seen == result.late_rows  # exactly the late rows are missed
 
 
-# --- the command line ----------------------------------------------------------
+# the command line
 
 
 def test_command_line_init_advance_status(tmp_path, capsys):

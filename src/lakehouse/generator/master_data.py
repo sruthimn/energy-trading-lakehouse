@@ -1,22 +1,11 @@
-"""Changes to reference data over time.
+"""Changes to reference data over time (onboarding, downgrades, deletions, desk moves).
 
-In a real company, reference data is not frozen. Counterparties are onboarded,
-their credit ratings move, books are moved between desks, and sometimes a
-record is deleted. The source system keeps a **change log** of every one of
-these changes. Reading that log is called change data capture, or CDC.
+This module decides what changes each day. source_db.py applies the changes and writes them to
+the change log (CDC).
 
-This module decides WHAT changes on each simulated day. The source database
-(source_db.py) applies the changes and writes them to the change log.
-
-Scripted events (they happen once, on a fixed date)
----------------------------------------------------
-* 19 Mar 2026  a book is moved from one desk to another        (history needed)
-* 24 Mar 2026  a counterparty is downgraded, its limit is cut   (defect D08)
-* 26 Mar 2026  a new counterparty is onboarded                  (an insert)
-*  6 Apr 2026  a counterparty is deleted at the source          (defect D16)
-
-On top of that, small random changes happen on ordinary days: a credit limit is
-adjusted, or a rating moves by one notch. They make the log feel real.
+Scripted events: 19 Mar a book moves desk, 24 Mar a counterparty is downgraded (D08), 26 Mar a
+counterparty is onboarded, 6 Apr a counterparty is deleted (D16). Small random limit and rating
+changes happen on other days.
 """
 
 from __future__ import annotations
@@ -31,6 +20,7 @@ from lakehouse.generator.reference import (
     NAME_SECTORS,
     RATINGS,
 )
+from lakehouse.generator.rng_state import decode_rng, encode_rng
 
 RATING_ORDER = [rating for rating, _ in RATINGS]  # safest first
 BASE_LIMIT = dict(RATINGS)
@@ -112,11 +102,9 @@ class MasterDataSimulator:
         self.extra_names_used = 0
         self.downgraded_id: str | None = None
 
-    # ------------------------------------------------------------------
     def get_state(self) -> dict:
-        version, internal, gauss = self._rng.getstate()
         return {
-            "rng": [version, list(internal), gauss],
+            "rng": encode_rng(self._rng.getstate()),
             "fired": sorted(self.fired),
             "next_counterparty_number": self.next_counterparty_number,
             "extra_names_used": self.extra_names_used,
@@ -124,14 +112,12 @@ class MasterDataSimulator:
         }
 
     def set_state(self, state: dict) -> None:
-        version, internal, gauss = state["rng"]
-        self._rng.setstate((version, tuple(internal), gauss))
+        self._rng.setstate(decode_rng(state["rng"]))
         self.fired = set(state["fired"])
         self.next_counterparty_number = state["next_counterparty_number"]
         self.extra_names_used = state["extra_names_used"]
         self.downgraded_id = state["downgraded_id"]
 
-    # ------------------------------------------------------------------
     def changes_for_day(
         self, day: date, counterparties: list[dict], books: list[dict]
     ) -> list[Change]:
@@ -140,7 +126,7 @@ class MasterDataSimulator:
         changes: list[Change] = []
         touched: set[str] = set()  # counterparties already changed today
 
-        # Scripted events -------------------------------------------------
+        # Scripted events
         if day == self.book_remap_day and "book_remap" not in self.fired:
             change = self._remap_book(day, books)
             if change:
@@ -166,7 +152,7 @@ class MasterDataSimulator:
                 touched.add(change.row["counterparty_id"])
             self.fired.add("delete")
 
-        # Small random changes --------------------------------------------
+        # Small random changes
         for counterparty_id in sorted(cps):
             if counterparty_id in touched:
                 continue
@@ -192,7 +178,6 @@ class MasterDataSimulator:
         changes.sort(key=lambda change: change.commit_time)
         return changes
 
-    # ------------------------------------------------------------------
     def _remap_book(self, day: date, books: list[dict]) -> Change | None:
         """Move the last UK gas book to the EU gas desk."""
         candidates = [book for book in books if book["desk_code"] == "UKGAS"]

@@ -1,6 +1,6 @@
 # ADR 0002: Azure first, with ADF for ingestion
 
-- Status: accepted
+- Status: accepted. The processing and deployment parts are replaced by [ADR 0003](0003-databricks-native-processing.md), [ADR 0004](0004-shared-sql-server-and-environments.md) and [ADR 0005](0005-azure-devops-for-ci-cd.md). The choice of ADF for ingestion stands.
 - Date: 2026-11-09
 
 ## Context

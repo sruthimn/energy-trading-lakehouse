@@ -63,7 +63,7 @@ def system(tmp_path_factory):
     return source
 
 
-# --- the log at the start --------------------------------------------------------
+# the log at the start
 
 
 def test_the_log_starts_with_one_insert_for_every_reference_row(tmp_path):
@@ -76,7 +76,7 @@ def test_the_log_starts_with_one_insert_for_every_reference_row(tmp_path):
     assert sorted(lsns) == list(range(1, 53))
 
 
-# --- the log is a faithful record -------------------------------------------------
+# the log is a faithful record
 
 
 def test_replaying_the_counterparty_log_rebuilds_the_table(system):
@@ -110,7 +110,7 @@ def test_commit_times_never_go_backwards_as_the_sequence_goes_up(system):
     assert times == sorted(times)
 
 
-# --- scripted events ----------------------------------------------------------------
+# scripted events
 
 
 def test_nothing_scripted_happens_before_its_day(tmp_path):
@@ -225,7 +225,7 @@ def test_some_small_random_changes_also_happen(system):
     assert count > 0
 
 
-# --- stopping and restarting -----------------------------------------------------------
+# stopping and restarting
 
 
 def test_stopping_and_restarting_gives_the_same_change_log(tmp_path):

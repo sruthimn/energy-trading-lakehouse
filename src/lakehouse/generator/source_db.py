@@ -1,35 +1,7 @@
-"""The simulated trading system database.
+"""The simulated trading system database (etrm.db, SQLite).
 
-This is the "source system" that the pipeline reads from. It is a small SQLite
-file called etrm.db (ETRM is the usual name for a trading system).
-
-It moves forward **one business day at a time**. Each day it adds the trade rows
-that the simulator produced, exactly as a real system adds rows while traders
-work. Run it again tomorrow and it carries on from where it stopped, even if
-the program was closed in between.
-
-Tables the pipeline may read
-----------------------------
-trades          every version of every trade (the busiest table)
-books           reference data (full load)
-commodities     reference data (full load)
-counterparties  reference data, with a change log (change data capture)
-
-Change logs the pipeline may read (CDC)
----------------------------------------
-cdc_counterparties  every insert, update and delete of counterparties
-cdc_books           every insert, update and delete of books
-
-Tables the pipeline must NOT read
----------------------------------
-sim_state           where the simulator saves its progress
-sim_truth           a private record of what was injected, used by tests
-sim_deleted_trades  copies of trade rows that were hard deleted (defect D17)
-
-Files written next to the database
-----------------------------------
-control_totals/date=YYYY-MM-DD/control_totals.csv  end-of-day totals for finance
-_truth/defects.json     the truth manifest (never read it in the pipeline)
+It moves forward one business day at a time and keeps its progress in the database, so it can
+be stopped and continued later. The tables are described in docs/data/source-database.md.
 """
 
 from __future__ import annotations
@@ -206,7 +178,6 @@ class SourceSystem:
             raise FileNotFoundError(f"No source system found in {self.directory}. Create it first.")
         self._load()
 
-    # ------------------------------------------------------------------
     @classmethod
     def create(
         cls,
@@ -272,7 +243,6 @@ class SourceSystem:
             )
         return cls(directory)
 
-    # ------------------------------------------------------------------
     @property
     def next_business_date(self) -> date:
         """The business day that the next call to advance() will simulate."""
@@ -287,7 +257,7 @@ class SourceSystem:
         return write_truth(self.directory, self.db_path)
 
     def status(self) -> dict:
-        """A short summary, for people."""
+        """Where the simulation is, as a small summary."""
         with sqlite3.connect(self.db_path) as con:
             rows, trades = con.execute(
                 "SELECT COUNT(*), COUNT(DISTINCT trade_id) FROM trades"
@@ -305,7 +275,6 @@ class SourceSystem:
             "change_log_rows": changes,
         }
 
-    # ------------------------------------------------------------------
     def _load(self) -> None:
         """Read the saved progress and rebuild the simulator from it."""
         with sqlite3.connect(self.db_path) as con:
@@ -413,10 +382,10 @@ class SourceSystem:
         )
 
     def _hard_delete(self, con: sqlite3.Connection, day: date) -> list[str]:
-        """Physically delete a few old trades from the source (defect D17).
+        """Physically delete a few old trades (defect D17).
 
-        A watermark load cannot see this: a deleted row is simply not there to read.
-        The deleted rows are copied to sim_deleted_trades first, so tests know the truth.
+        A watermark load cannot see a deleted row. The rows are copied to sim_deleted_trades
+        first, so tests know what was deleted.
         """
         if not self._defects.is_hard_delete_day(day):
             return []
@@ -450,7 +419,6 @@ class SourceSystem:
             self._simulator.add_counterparty(counterparty_id)
 
 
-# ----------------------------------------------------------------------
 def _write_reference(con: sqlite3.Connection, reference: ReferenceData) -> None:
     """Load the reference tables into the database."""
     for name in ("commodities", "books", "counterparties"):

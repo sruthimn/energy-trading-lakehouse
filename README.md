@@ -1,8 +1,8 @@
 # Energy Trading Lakehouse
 
-An end-to-end data engineering platform for a **fictional** energy trading company, built on Azure with a Medallion (Bronze, Silver, Gold) lakehouse. It demonstrates four ingestion patterns (full load, watermark incremental load, change data capture and REST API ingestion with pagination), schema validation, data quality checks, an SCD Type 2 star schema, infrastructure as code and CI/CD.
+An end-to-end data engineering platform for a **fictional** energy trading company, built on Azure and Databricks with a Medallion (Bronze, Silver, Gold) lakehouse. It demonstrates metadata-driven ingestion with Azure Data Factory (full load, watermark incremental load, change data capture, REST API ingestion with pagination, and files), Auto Loader, Lakeflow Spark Declarative Pipelines, Databricks Workflows and Asset Bundles, data quality checks, an SCD Type 2 star schema, row and column security, infrastructure as code, and CI/CD with dev and prod environments in Azure DevOps.
 
-> **Status:** in progress. The synthetic source system is complete. The Azure environment and ingestion pipelines are being built. See [docs/design.md](docs/design.md) and [docs/backlog.md](docs/backlog.md).
+> **Status:** in progress. The synthetic source system is complete and the Azure foundation has been deployed once. The control table, ingestion pipelines, Databricks layers and deployment pipelines are being built. See [docs/design.md](docs/design.md) and [docs/backlog.md](docs/backlog.md).
 
 ## About the data
 
@@ -14,18 +14,22 @@ This project implements a pattern the author has used professionally. It does no
 
 | Topic | Where to look |
 |---|---|
-| Watermark incremental load with a lookback | ADF pipeline for `trades` |
-| Full load with a row-count check | ADF pipeline for `commodities` |
-| Change data capture (inserts, updates, deletes) | ADF pipeline for counterparty and book change logs |
-| REST API ingestion and pagination | ADF pipelines for FX rates and the grid forecast |
+| Metadata-driven, parameterised ingestion | One generic ADF pipeline driven by a control table |
+| Watermark incremental load with a lookback | The `trades` source |
+| Full load with a row-count check | The `commodities` source |
+| Change data capture (inserts, updates, deletes) | Counterparty and book change logs |
+| REST API ingestion and pagination | FX rates and the grid forecast |
+| File ingestion with Auto Loader | CSV and JSON files in the landing zone |
 | Schema validation with quarantine | After Bronze |
-| SCD Type 2 and as-at-trade-date joins | Gold dimensions |
+| Declarative pipelines, SCD Type 2, as-at-trade-date joins | Silver and Gold |
+| Workflows and Asset Bundles | One job, deployed to dev and prod |
+| Row and column security | Unity Catalog on a Gold table |
 | Infrastructure as code | Terraform for Azure |
-| CI | GitHub Actions |
+| CI/CD | Azure DevOps Pipelines, with an approval before prod |
 
 ## Architecture
 
-Azure SQL (synthetic source) and two public REST APIs feed Azure Data Factory. Data lands in ADLS Gen2 and flows through Bronze and Silver on Azure Databricks, then Gold models built with dbt. Terraform provisions the Azure resources, Key Vault holds the secrets and GitHub Actions checks every change. Airflow on AKS, automated deployment and a real-time track are planned for a later phase. Details are in [docs/design.md](docs/design.md) and the decisions are in [docs/decisions](docs/decisions).
+A shared Azure SQL server (synthetic source), two public REST APIs and files feed Azure Data Factory, which is driven by a control table. Data lands in ADLS Gen2. Azure Databricks reads it with Auto Loader and builds Bronze, Silver and Gold with Lakeflow Spark Declarative Pipelines, run by a Lakeflow Job and deployed with a Databricks Asset Bundle. Terraform provisions the Azure resources, Key Vault holds the secrets and Azure DevOps Pipelines deploy every change to dev and then prod. Lakeflow Connect, dbt, Airflow on AKS and a real-time track are planned for a later phase. Details are in [docs/design.md](docs/design.md) and the decisions are in [docs/decisions](docs/decisions).
 
 ## Getting started (local)
 

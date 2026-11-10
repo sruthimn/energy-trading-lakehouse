@@ -65,7 +65,7 @@ def keys(entries):
     return {(e["trade_id"], e["trade_version"]) for e in entries}
 
 
-# --- D04, D05, D14: spoiled rows ---
+# D04, D05, D14: spoiled rows
 
 
 def test_every_empty_mandatory_field_was_injected_and_nothing_else(system, manifest):
@@ -166,7 +166,7 @@ def test_no_defects_are_injected_when_the_rates_are_zero(tmp_path):
     assert sum(r.trades_deleted for r in results) == 0
 
 
-# --- D17: hard deleted trades ---
+# D17: hard deleted trades
 
 
 def test_hard_deleted_trades_are_gone_from_the_source_but_kept_as_proof(system, manifest):
@@ -195,7 +195,7 @@ def test_the_pipeline_view_still_holds_the_deleted_trades(manifest):
     assert pipeline["active_trades"] - source["active_trades"] == 3
 
 
-# --- control totals ---
+# control totals
 
 
 def test_a_control_totals_file_is_written_for_every_day(system):
@@ -230,7 +230,7 @@ def test_control_totals_grow_as_trades_accumulate(system):
     assert total("2026-03-17") > total("2026-03-16")
 
 
-# --- D06 and D07: units and clock changes ---
+# D06 and D07: units and clock changes
 
 
 def test_the_vectorised_volume_agrees_with_the_one_row_function(system):
@@ -288,7 +288,7 @@ def test_the_manifest_counts_mw_rows_that_a_simple_subtraction_gets_wrong(system
     assert reported == wrong
 
 
-# --- the rules of the truth ---
+# the rules of the truth
 
 
 def test_active_trades_never_include_a_cancelled_latest_version(system):
@@ -307,7 +307,7 @@ def test_book_totals_of_nothing_is_an_empty_table():
     assert result.empty
 
 
-# --- the manifest itself ---
+# the manifest itself
 
 
 def test_the_manifest_is_valid_json_with_the_expected_sections(system):
@@ -350,7 +350,7 @@ def test_stopping_and_restarting_gives_the_same_manifest(tmp_path):
     assert build_truth(straight.db_path) == build_truth(reopened.db_path)
 
 
-# --- the injector on its own ---
+# the injector on its own
 
 
 def make_frame(count=2000):
@@ -409,7 +409,7 @@ def test_the_injector_rates_are_roughly_right():
     assert 120 < len(injections) < 280  # about 200
 
 
-# --- the command line ---
+# the command line
 
 
 def test_command_line_writes_the_manifest(tmp_path, capsys):

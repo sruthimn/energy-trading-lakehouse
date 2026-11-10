@@ -5,10 +5,7 @@ from pyspark.sql import SparkSession
 
 @pytest.fixture(scope="session")
 def spark():
-    """A small local Spark session with Delta Lake switched on.
-
-    Used by tests that need Spark. It starts once and is shared by all tests.
-    """
+    """A small local Spark session with Delta Lake, started once for all tests."""
     builder = (
         SparkSession.builder.master("local[2]")
         .appName("lakehouse-tests")

@@ -3,11 +3,13 @@
 python -m lakehouse.generator.cli init    --dir data/source --trades-per-day 20000
 python -m lakehouse.generator.cli advance --dir data/source --days 5
 python -m lakehouse.generator.cli status  --dir data/source
+python -m lakehouse.generator.cli load    --dir data/source   (copies the data into Azure SQL)
 """
 
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from datetime import date
 
 from lakehouse.generator.reference import DEFAULT_SEED
@@ -37,7 +39,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="show where the simulation is")
     status.add_argument("--dir", required=True)
+
+    load = sub.add_parser("load", help="copy the source database into Azure SQL")
+    load.add_argument("--dir", required=True)
     return parser
+
+
+def load_to_azure_sql(system: SourceSystem) -> int:
+    from lakehouse.generator.azure_sql import connect_from_environment, create_tables, sync
+
+    target = connect_from_environment()
+    create_tables(target)
+    with sqlite3.connect(system.db_path) as source:
+        for name, value in sync(source, target).items():
+            print(f"{name}: {value}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     system = SourceSystem(args.dir)
+    if args.command == "load":
+        return load_to_azure_sql(system)
     if args.command == "advance":
         for result in system.advance(args.days):
             print(
